@@ -1,0 +1,254 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/*
+ * IntelliDoc theme = docs/Design.md ("Focus Utility") tokens mapped onto the
+ * shadcn/ui variable contract, so shadcn components and our own markup share
+ * one design system. Light only: Design.md defines no dark palette.
+ */
+
+@theme inline {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Design.md extras */
+  --color-canvas: var(--bg);
+  --color-canvas-deep: var(--bg-deep);
+  --color-surface: var(--surface);
+  --color-tertiary: var(--tertiary);
+  --color-ghost: var(--text-ghost);
+  --color-border-mid: var(--border-mid);
+  --color-border-strong: var(--border-strong);
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-light: var(--brand-light);
+  --color-brand-text: var(--brand-text);
+  --color-ok: var(--green);
+  --color-ok-light: var(--green-light);
+  --color-ok-text: var(--green-text);
+  --color-warn: var(--amber);
+  --color-warn-light: var(--amber-light);
+  --color-danger: var(--red);
+  --color-danger-light: var(--red-light);
+  --color-danger-text: var(--red-text);
+
+  /* Design.md radius scale: 7 / 11 / 13 / 14 / 20 / full */
+  --radius-sm: 7px;
+  --radius-md: 11px;
+  --radius-lg: 13px;
+  --radius-xl: 14px;
+  --radius-2xl: 20px;
+}
+
+:root {
+  /* Design.md colors */
+  --bg: #f5f4f0;
+  --bg-deep: #eceae3;
+  --surface: #ffffff;
+  --ink: #151412;
+  --secondary-ink: #68655f;
+  --tertiary: #a39f98;
+  --text-ghost: #c5c1ba;
+  --border-light: #eae8e2;
+  --border-mid: #dfddd7;
+  --border-strong: #cfcdc7;
+  --brand: #2750d6;
+  --brand-hover: #3460e8;
+  --brand-light: #ebf0fd;
+  --brand-text: #1a38a0;
+  --green: #137e44;
+  --green-light: #e3f4ec;
+  --green-text: #0c5430;
+  --amber: #905300;
+  --amber-light: #fdf0dc;
+  --red: #ba2b2b;
+  --red-light: #faebeb;
+  --red-text: #861e1e;
+
+  /* shadcn contract */
+  --background: var(--bg);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: var(--surface);
+  --popover-foreground: var(--ink);
+  --primary: var(--ink);
+  --primary-foreground: var(--surface);
+  --secondary: var(--bg-deep);
+  --secondary-foreground: var(--ink);
+  --muted: var(--bg-deep);
+  --muted-foreground: var(--secondary-ink);
+  --accent: var(--bg-deep);
+  --accent-foreground: var(--ink);
+  --destructive: var(--red);
+  --border: var(--border-light);
+  --input: var(--border-mid);
+  --ring: var(--brand);
+  --radius: 13px;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-size: 14px;
+    line-height: 1.4;
+    letter-spacing: -0.2px;
+  }
+  :focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+  /* Touch devices: comfortable hit targets for all controls. */
+  @media (pointer: coarse) {
+    [data-slot='button'],
+    [data-slot='toggle-group-item'],
+    [data-slot='select-trigger'] {
+      min-height: 40px;
+    }
+  }
+}
+
+
+/* Design.md typography roles as utilities (usable with responsive variants). */
+@utility type-display {
+  font-size: 38px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -1.4px;
+}
+@utility type-headline {
+  font-size: 31px;
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -1.1px;
+}
+@utility type-title {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.3px;
+}
+@utility type-label {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.85px;
+  text-transform: uppercase;
+}
+/* Numbers, sizes, dates, percentages: JetBrains Mono (Design.md do's). */
+@utility type-num {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  letter-spacing: -0.1px;
+  font-variant-numeric: tabular-nums;
+}
+
+@layer components {
+  /*
+   * Editor-only overlay boxes on the page (never exported). Full-strength
+   * colours, a light tint and a thin white halo keep them visible on white
+   * paper, grey scans and dark areas alike.
+   */
+  .el-box {
+    position: absolute;
+    padding: 0;
+    border-radius: 3px;
+    background: transparent;
+    border: 1.5px solid transparent;
+    transform-origin: center;
+    cursor: pointer;
+    transition: background-color 120ms, border-color 120ms, box-shadow 120ms;
+  }
+  .el-box:hover {
+    background: color-mix(in srgb, var(--brand) 12%, transparent);
+    border-color: var(--brand);
+  }
+  .el-high,
+  .el-mid,
+  .el-low,
+  .el-edited,
+  .el-selected {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.9);
+  }
+  .el-high {
+    border-color: color-mix(in srgb, var(--brand) 80%, transparent);
+    background: color-mix(in srgb, var(--brand) 5%, transparent);
+  }
+  .el-mid {
+    border-color: #d97a00;
+    background: color-mix(in srgb, #d97a00 10%, transparent);
+  }
+  .el-low {
+    border-color: var(--red);
+    background: color-mix(in srgb, var(--red) 10%, transparent);
+  }
+  .el-edited {
+    border-color: var(--green);
+    background: color-mix(in srgb, var(--green) 10%, transparent);
+  }
+  .el-selected {
+    border: 2px solid var(--brand);
+    background: color-mix(in srgb, var(--brand) 14%, transparent);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.95),
+      0 0 0 4px color-mix(in srgb, var(--brand) 30%, transparent);
+  }
+  /* Eyedropper mode: every recognised text is a candidate style source. */
+  .el-pickable {
+    border: 1.5px dashed var(--brand);
+    background: color-mix(in srgb, var(--brand) 6%, transparent);
+  }
+  .el-pickable:hover {
+    background: color-mix(in srgb, var(--brand) 22%, transparent);
+    border-style: solid;
+  }
+  .el-busy {
+    animation: el-pulse 1s infinite alternate;
+  }
+  @keyframes el-pulse {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0.45;
+    }
+  }
+  .inline-editor {
+    position: absolute;
+    z-index: 2;
+    transform-origin: center;
+    padding: 0 4px;
+    border: 2px solid var(--brand);
+    border-radius: 7px;
+    background: var(--surface);
+    box-shadow: 0 4px 20px rgba(39, 80, 214, 0.2);
+  }
+}

@@ -1,0 +1,1447 @@
+# 
+
+INTELLIDOC — COMPLETE PROJECT INSTRUCTIONS
+
+PROJECT NAME
+
+IntelliDoc
+
+CORE IDEA
+
+IntelliDoc is a client-side scanned-document OCR, reconstruction, and editing application.
+
+The main idea is simple:
+
+A user uploads a scanned document image or PDF.
+
+The application reads the document using OCR.
+
+It detects the text, position, layout, typography, colors, spacing, and other visual characteristics.
+
+The user can then edit the recognized text directly in the document.
+
+When text is changed, IntelliDoc should remove or reconstruct the original text area and render the new text so that it visually matches the original document as closely as technically possible.
+
+The final result should look like the same original document with the text legitimately changed, rather than looking like new computer-generated text placed on top of a scanned image.
+
+Example:
+
+Original:
+
+Date: 13-09-2024
+
+User changes it to:
+
+Date: 19-07-2026
+
+The resulting document should preserve the original document’s visual characteristics, including typography, size, weight, color, spacing, alignment, position, background, texture, scan quality, and other relevant characteristics.
+
+This is NOT simply an OCR-to-text application.
+
+It is a visual document reconstruction and editing system.
+
+# **MAIN PRODUCT GOAL**
+
+The highest-priority goal is:
+
+CHANGE TEXT WHILE PRESERVING THE ORIGINAL VISUAL APPEARANCE.
+
+The system should attempt to reproduce:
+
+- Font family or closest visual font
+- Font size
+- Font weight
+- Italic/normal style
+- Text color
+- Opacity
+- Character spacing
+- Word spacing
+- Line spacing
+- Baseline
+- Text width
+- Text height
+- Horizontal scaling
+- Vertical scaling
+- Rotation
+- Alignment
+- Position
+- Stroke/thickness appearance
+- Anti-aliasing appearance
+- Local scan texture
+- Background texture
+- Paper color
+- Shadows
+- Noise
+- Compression artifacts
+- Other characteristics visible in the original scan
+
+The system should not assume that the original font metadata exists.
+
+A scanned image usually contains pixels rather than actual font information.
+
+Therefore, IntelliDoc must estimate the visual characteristics from the pixels.
+
+The goal is visual matching, not merely identifying a font name.
+
+# **IMPORTANT PRINCIPLE**
+
+Never solve a visual reconstruction problem with a simple text overlay if a better reconstruction method is possible.
+
+Do not simply:
+
+1. Detect text.
+2. Put a white rectangle over it.
+3. Draw Arial text.
+4. Export.
+
+Instead:
+
+1. Detect the original text region.
+2. Analyze the original pixels.
+3. Understand the surrounding background.
+4. Remove or mask the original text.
+5. Reconstruct the background.
+6. Analyze typography.
+7. Generate candidate replacement renderings.
+8. Compare candidates with the original visual characteristics.
+9. Optimize the rendering.
+10. Composite the replacement into the document.
+11. Preserve the natural appearance of the scan.
+
+# **PRODUCT WORKFLOW**
+
+The main workflow should be:
+
+UPLOAD
+
+→ DECODE
+
+→ PREPROCESS
+
+→ OCR
+
+→ LAYOUT ANALYSIS
+
+→ TEXT DETECTION
+
+→ TYPOGRAPHY ANALYSIS
+
+→ BACKGROUND ANALYSIS
+
+→ DOCUMENT MODEL
+
+→ EDIT
+
+→ BACKGROUND RECONSTRUCTION
+
+→ TEXT RECONSTRUCTION
+
+→ VISUAL OPTIMIZATION
+
+→ RENDER
+
+→ PREVIEW
+
+→ EXPORT
+
+The user experience should remain simple even though the internal system is sophisticated.
+
+The user should not need to understand OCR, computer vision, fonts, masks, inpainting, or rendering.
+
+# **CLIENT-SIDE REQUIREMENT**
+
+The core document-processing system should run entirely in the browser.
+
+Do not require a backend for:
+
+- Upload processing
+- OCR
+- Image processing
+- Layout detection
+- Typography analysis
+- Editing
+- Background reconstruction
+- Rendering
+- PDF generation
+- Export
+
+Documents should remain on the user’s device during normal processing.
+
+Use browser technologies such as:
+
+- Web Workers
+- WebAssembly
+- Canvas
+- SVG where appropriate
+- OffscreenCanvas where supported
+- IndexedDB
+- Browser APIs
+- Client-side PDF processing
+
+The architecture must allow heavy processing to happen outside the main UI thread.
+
+# **PREFERRED TECHNOLOGY**
+
+Preferred stack:
+
+Frontend:
+
+- Next.js
+- React
+- TypeScript
+
+Rendering:
+
+- Canvas
+- SVG where appropriate
+- OffscreenCanvas where supported
+
+OCR:
+
+- Tesseract.js initially
+- Architecture must allow other OCR engines later
+
+Computer vision:
+
+- OpenCV.js or equivalent browser-compatible processing
+
+PDF:
+
+- PDF.js for reading/rendering PDFs
+- Browser-compatible PDF generation for export
+
+Storage:
+
+- IndexedDB
+
+Processing:
+
+- Web Workers
+- WebAssembly where practical
+
+Do not make the architecture dependent on one specific OCR library.
+
+OCR, layout detection, typography analysis, reconstruction, rendering, and export should be replaceable modules.
+
+# **DOCUMENT MODEL**
+
+The document model is the source of truth.
+
+Do not build the application around raw OCR text.
+
+A document should contain pages.
+
+Each page may contain:
+
+- Background
+- Text elements
+- Images
+- Tables
+- Shapes
+- Lines
+- Groups
+- Other detected objects
+
+A text element should contain information such as:
+
+- Unique ID
+- Text
+- Page ID
+- Bounding box
+- X position
+- Y position
+- Width
+- Height
+- OCR confidence
+- Reading order
+- Line information
+- Word information
+- Character information where available
+- Rotation
+- Typography information
+- Color information
+- Background information
+- Editing state
+
+Typography information may include:
+
+- Font family estimate
+- Font category
+- Font size
+- Weight
+- Style
+- Color
+- Opacity
+- Letter spacing
+- Word spacing
+- Line height
+- Baseline
+- Horizontal scale
+- Vertical scale
+- Rotation
+
+The model must support future expansion.
+
+# **OCR ENGINE**
+
+OCR is responsible for recognizing document content.
+
+OCR should preserve more than just text.
+
+The OCR system should attempt to provide:
+
+- Text
+- Words
+- Lines
+- Paragraphs
+- Bounding boxes
+- Confidence
+- Reading order
+- Page number
+- Orientation
+- Rotation where possible
+
+OCR processing should occur in a Web Worker.
+
+The UI must remain responsive while OCR is running.
+
+The application should show meaningful processing progress.
+
+Low-confidence OCR should be visually identifiable to the user.
+
+The user must be able to manually correct OCR results.
+
+OCR and visual reconstruction are separate systems.
+
+Do not assume that accurate OCR automatically produces accurate document reconstruction.
+
+# **IMAGE PREPROCESSING**
+
+Before OCR, the system may perform browser-side preprocessing.
+
+Possible operations include:
+
+- Resolution normalization
+- Grayscale conversion
+- Contrast adjustment
+- Noise reduction
+- Sharpening
+- Deskewing
+- Rotation correction
+- Thresholding
+- Adaptive thresholding
+- Document boundary detection
+- Perspective correction
+
+Do not destroy the original image.
+
+Always preserve the original source.
+
+Preprocessing should create a working copy.
+
+# **LAYOUT ANALYSIS**
+
+The system must understand where content exists on the page.
+
+Detect or preserve:
+
+- Text blocks
+- Lines
+- Words
+- Images
+- Tables
+- Headings
+- Paragraphs
+- Headers
+- Footers
+- Margins
+- Columns
+- Forms
+- Labels
+- Signatures
+- Stamps
+- Logos
+- Lines
+- Shapes
+
+Do not assume every document has the same layout.
+
+Never hard-code coordinates for one example document.
+
+# **VISUAL FIDELITY ENGINE**
+
+Visual fidelity is a P0 requirement.
+
+The replacement text must attempt to match the original text visually.
+
+The system should analyze the original text region before modifying it.
+
+Analyze:
+
+- Glyph appearance
+- Stroke thickness
+- Character width
+- Character height
+- Text density
+- Darkness
+- Color
+- Spacing
+- Baseline
+- Alignment
+- Rotation
+- Local texture
+- Background
+- Noise
+- Scan artifacts
+
+The system should generate candidate renderings and compare them against the original region.
+
+Candidate parameters may include:
+
+- Font
+- Font size
+- Font weight
+- Italic
+- Color
+- Opacity
+- Letter spacing
+- Word spacing
+- Horizontal scaling
+- Vertical scaling
+- Position
+- Baseline
+- Rotation
+- Rendering method
+
+The system should iteratively adjust these parameters to improve visual similarity.
+
+Do not rely on one fixed font.
+
+Do not default to Arial unless the analysis determines that it is visually appropriate.
+
+# **FONT IDENTIFICATION**
+
+Font identification is an important part of the system.
+
+However, a scan does not normally contain the original font metadata.
+
+Therefore, the application should distinguish between:
+
+1. Actual known font metadata
+2. Estimated font characteristics
+3. Visually similar candidate fonts
+
+When possible:
+
+- Identify likely font families
+- Compare glyph shapes
+- Compare stroke characteristics
+- Compare proportions
+- Compare character widths
+- Compare serif/sans-serif characteristics
+- Compare x-height
+- Compare ascenders/descenders
+- Compare weight
+- Compare spacing
+
+If the exact font cannot be determined, optimize for visual similarity rather than claiming certainty.
+
+# **TEXT REPLACEMENT**
+
+When the user edits text:
+
+1. Store the new text in the document model.
+2. Identify the original text region.
+3. Preserve its visual parameters.
+4. Determine the new text dimensions.
+5. Reconstruct the original background.
+6. Render the replacement text.
+7. Adjust typography to fit the original region.
+8. Compare the result with the original style.
+9. Optimize the rendering.
+10. Composite the result.
+
+If the new text is longer or shorter, intelligently adapt it.
+
+Possible adjustments:
+
+- Font size
+- Horizontal scaling
+- Letter spacing
+- Word spacing
+- Text box width
+- Alignment
+
+Do not distort text unnecessarily.
+
+The system should prefer natural typography before aggressive scaling.
+
+# **BACKGROUND RECONSTRUCTION**
+
+Do not simply cover removed text with a solid white rectangle.
+
+The background may contain:
+
+- Paper texture
+- Grayness
+- Shadows
+- Gradients
+- Lines
+- Tables
+- Printed patterns
+- Stamps
+- Noise
+- Compression artifacts
+- Scanning artifacts
+
+The system should analyze nearby pixels and reconstruct the text region appropriately.
+
+Possible techniques include:
+
+- Local background estimation
+- Masking
+- Inpainting
+- Texture synthesis
+- Neighbor-based reconstruction
+- Edge-aware reconstruction
+- Noise preservation
+
+The reconstructed region should blend naturally with the surrounding document.
+
+# **RENDERING ARCHITECTURE**
+
+Use a layered rendering system.
+
+Recommended conceptual layers:
+
+Layer 1:
+
+Original background
+
+Layer 2:
+
+Background reconstruction / masked regions
+
+Layer 3:
+
+Editable reconstructed text
+
+Layer 4:
+
+Images
+
+Layer 5:
+
+Tables and shapes
+
+Layer 6:
+
+Other document elements
+
+Layer 7:
+
+Editor-only controls
+
+The editor UI must never appear in the exported document.
+
+The original source should remain immutable.
+
+The application should maintain:
+
+# **Original Document**
+
+# 
+
+# 
+
+# **+**
+
+# 
+
+# 
+
+# **Document Model**
+
+# 
+
+# 
+
+# **+**
+
+# 
+
+# 
+
+# **Edits**
+
+Generated Document
+
+# **EDITOR**
+
+The editor should feel simple and familiar.
+
+The user should be able to:
+
+- Click text
+- Select text
+- Edit text
+- Delete text
+- Add text where supported
+- Move elements
+- Resize elements where appropriate
+- Adjust properties
+- Undo
+- Redo
+- Zoom
+- Pan
+- Navigate pages
+- Compare original and edited versions
+- Preview final output
+
+The editing experience should happen directly on the document.
+
+Avoid forcing users into a separate plain-text editor.
+
+# **EDITOR VISUALIZATION**
+
+During editing, show:
+
+- Selected text box
+- Bounding box
+- Handles where appropriate
+- Confidence indicators when useful
+- Editable text
+- Optional typography properties
+
+Do not permanently show technical overlays in exported output.
+
+The interface should be clean and professional.
+
+# **UNDO / REDO**
+
+Editing must support undo and redo.
+
+Prefer command/history-based state management.
+
+Users should be able to safely experiment without losing the original document.
+
+Autosave project state locally when appropriate.
+
+# **ORIGINAL DOCUMENT**
+
+The original uploaded document must never be destructively modified.
+
+Always preserve the source.
+
+Edits should be stored separately.
+
+This allows:
+
+- Undo
+- Comparison
+- Reprocessing
+- Exporting multiple versions
+- Recovery
+- Debugging
+- Provenance
+
+# **MULTI-PAGE DOCUMENTS**
+
+Support multi-page PDFs and documents.
+
+Each page should have its own coordinate system.
+
+The application should maintain:
+
+- Page dimensions
+- Page order
+- Page content
+- Page background
+- Page objects
+
+Processing should be progressive where possible.
+
+Do not block the entire UI unnecessarily while processing a large document.
+
+# **PDF SUPPORT**
+
+PDF input should be rendered safely in the browser.
+
+The application should extract or render pages before processing.
+
+For scanned PDFs, treat each page as an image/document surface when necessary.
+
+Preserve page dimensions and aspect ratio.
+
+PDF export should preserve:
+
+- Page size
+- Page order
+- Position
+- Scale
+- Visual appearance
+
+# **EXPORT**
+
+Support export such as:
+
+- PNG
+- JPEG where appropriate
+- PDF
+
+Exported files must contain only the final document.
+
+Do not export:
+
+- Selection boxes
+- Editor controls
+- Cursor
+- Guides
+- Debug overlays
+- Confidence indicators
+- UI elements
+
+The export engine should use the same document model and rendering system as the editor preview whenever possible.
+
+# **PIXEL-LEVEL VISUAL OPTIMIZATION**
+
+Visual matching should be measurable.
+
+Where practical, compare:
+
+Original text region
+
+against
+
+Generated candidate region.
+
+Possible comparison metrics:
+
+- Pixel difference
+- Edge similarity
+- Glyph silhouette similarity
+- Bounding-box similarity
+- Text width difference
+- Text height difference
+- Darkness difference
+- Color difference
+- Stroke-density difference
+- Baseline difference
+- Spacing difference
+
+Use these measurements to improve candidate rendering.
+
+The architecture should allow future machine-learning-based visual matching without requiring a complete rewrite.
+
+# **PERFORMANCE**
+
+The UI must remain responsive.
+
+Heavy tasks should use Web Workers.
+
+Use progressive processing.
+
+Avoid unnecessary full-page rerendering.
+
+Cache expensive results.
+
+Use transferable objects where appropriate.
+
+Avoid copying very large images unnecessarily.
+
+Large documents must not freeze the browser.
+
+Performance is important, but visual accuracy takes priority when there is a genuine trade-off.
+
+# **PRIVACY**
+
+The application should be privacy-first.
+
+Documents should remain local by default.
+
+Do not upload documents to a server unless the user explicitly enables a future cloud feature.
+
+Do not send document contents to analytics.
+
+Do not store document content remotely.
+
+Use IndexedDB for local projects where appropriate.
+
+Clearly communicate the local-processing architecture to users.
+
+# **SECURITY**
+
+Uploaded documents are untrusted input.
+
+Validate:
+
+- File type
+- File size
+- PDF structure
+- Image decoding
+
+Use safe parsing libraries.
+
+Do not execute content from uploaded files.
+
+Use appropriate browser security protections.
+
+Avoid unsafe HTML rendering.
+
+Sanitize any extracted metadata before displaying it.
+
+# **ACCESSIBILITY**
+
+The application should support:
+
+- Keyboard navigation
+- Accessible buttons
+- Visible focus states
+- Appropriate labels
+- Screen-reader-friendly controls where possible
+- Sufficient contrast
+- Zoom-independent UI controls
+
+Do not sacrifice accessibility for visual design.
+
+# **RESPONSIVE DESIGN**
+
+Support:
+
+- Desktop
+- Laptop
+- Tablet
+
+Mobile can provide basic functionality, but the primary editing experience should be optimized for larger screens because precise document editing requires space.
+
+# **UI / UX PRINCIPLES**
+
+The application should feel:
+
+- Modern
+- Clean
+- Professional
+- Fast
+- Minimal
+- Easy to understand
+
+Main workflow:
+
+Upload
+
+→ Processing
+
+→ Edit
+
+→ Preview
+
+→ Export
+
+Avoid unnecessary complexity.
+
+Advanced controls can be placed behind an advanced/properties interface.
+
+# **LANDING PAGE**
+
+The landing page should clearly explain:
+
+What IntelliDoc does.
+
+Example positioning:
+
+“Edit scanned documents while preserving their original visual appearance.”
+
+Explain:
+
+- OCR
+- Visual reconstruction
+- In-browser processing
+- Privacy
+- Editing
+- Export
+
+Do not make marketing claims that cannot be technically supported.
+
+# **PROJECT STRUCTURE**
+
+Recommended structure:
+
+intellidoc/
+
+├── CLAUDE.md
+
+├── README.md
+
+├── package.json
+
+├── tsconfig.json
+
+├── app/
+
+├── components/
+
+│   ├── editor/
+
+│   ├── upload/
+
+│   ├── toolbar/
+
+│   ├── properties/
+
+│   └── pages/
+
+├── core/
+
+│   ├── document/
+
+│   ├── ocr/
+
+│   ├── layout/
+
+│   ├── vision/
+
+│   ├── typography/
+
+│   ├── reconstruction/
+
+│   ├── rendering/
+
+│   └── export/
+
+├── workers/
+
+│   ├── ocr.worker.ts
+
+│   ├── image.worker.ts
+
+│   └── reconstruction.worker.ts
+
+├── lib/
+
+│   ├── pdf/
+
+│   ├── image/
+
+│   ├── storage/
+
+│   └── utils/
+
+├── docs/
+
+│   ├── PRD.md
+
+│   ├── ARCHITECTURE.md
+
+│   ├── OCR_ENGINE.md
+
+│   ├── VISUAL_FIDELITY.md
+
+│   ├── DOCUMENT_MODEL.md
+
+│   ├── EDITOR_SPEC.md
+
+│   └── ROADMAP.md
+
+└── tests/
+
+├── ocr/
+
+├── typography/
+
+├── reconstruction/
+
+└── rendering/
+
+# **CODING RULES**
+
+Use TypeScript strictly.
+
+Prefer strongly typed interfaces and types.
+
+Avoid any unless absolutely necessary.
+
+Do not create giant components.
+
+Separate UI from document-processing logic.
+
+Keep OCR code separate from rendering code.
+
+Keep rendering separate from export.
+
+Keep document state separate from UI state.
+
+Do not hard-code document coordinates.
+
+Do not hard-code assumptions about one document.
+
+Do not duplicate logic.
+
+Create reusable utilities.
+
+Use meaningful names.
+
+Keep functions focused.
+
+Document complex computer-vision algorithms.
+
+Write tests for important processing logic.
+
+# **ARCHITECTURAL PRINCIPLE**
+
+Every major subsystem should be replaceable.
+
+For example:
+
+OCR Engine
+
+→ Tesseract implementation today
+
+→ Better browser OCR engine later
+
+Typography Engine
+
+→ Initial heuristic analysis
+
+→ Advanced ML model later
+
+Reconstruction Engine
+
+→ Initial inpainting
+
+→ Advanced reconstruction later
+
+Rendering Engine
+
+→ Canvas/SVG implementation
+
+→ More advanced renderer later
+
+Export Engine
+
+→ Initial browser PDF/image export
+
+→ More advanced PDF engine later
+
+Do not tightly couple the entire application to one implementation.
+
+# **TEST DOCUMENTS**
+
+Create a benchmark/test document collection.
+
+Recommended categories:
+
+test-documents/
+
+├── simple/
+
+├── invoices/
+
+├── forms/
+
+├── letters/
+
+├── tables/
+
+├── low-quality-scans/
+
+├── colored-text/
+
+├── different-fonts/
+
+└── difficult-layouts/
+
+Tests should eventually cover:
+
+- Clean scans
+- Low-resolution scans
+- Noisy scans
+- Skewed scans
+- Rotated scans
+- Different fonts
+- Different font weights
+- Different colors
+- Small text
+- Large text
+- Multi-line text
+- Tables
+- Forms
+- Mixed layouts
+- Non-uniform backgrounds
+
+# **VISUAL REGRESSION TESTING**
+
+Visual regression testing is important.
+
+Keep known input documents.
+
+Run reconstruction.
+
+Compare generated regions against expected output.
+
+Track changes when rendering algorithms are modified.
+
+A change that improves one document but damages many others should be identified.
+
+# **DEVELOPMENT PRIORITY**
+
+Do not begin by spending most of the time on the landing page.
+
+The first engineering proof should be:
+
+1. Load a scanned image.
+2. Detect one text region.
+3. Recognize the text.
+4. Capture its coordinates.
+5. Analyze its visual characteristics.
+6. Remove/reconstruct the original text region.
+7. Render replacement text.
+8. Change the text.
+9. Compare the generated result with the original region.
+10. Optimize the replacement.
+
+This vertical slice proves the core product idea.
+
+Only after this works should the system expand aggressively.
+
+# **PHASE 1**
+
+Build the fundamental pipeline:
+
+- Image upload
+- Image decoding
+- OCR
+- Bounding boxes
+- Basic document model
+- Single-page editor
+- Text selection
+- Text editing
+- Basic reconstruction
+- Basic typography matching
+- Canvas rendering
+- PNG export
+
+# **PHASE 2**
+
+Improve visual fidelity:
+
+- Better typography analysis
+- Font candidate detection
+- Glyph analysis
+- Better background reconstruction
+- Pixel comparison
+- Candidate rendering
+- Optimization loop
+- Improved text fitting
+- Better scan-noise preservation
+- Better color estimation
+
+# **PHASE 3**
+
+Expand document capabilities:
+
+- Multi-page PDFs
+- Tables
+- Forms
+- Images
+- Headers and footers
+- More complex layouts
+- PDF export
+- Local project storage
+- Autosave
+- Undo/redo
+- Original vs edited comparison
+
+# **PHASE 4**
+
+Advanced capabilities:
+
+- Better OCR engines
+- Advanced document layout models
+- Improved font identification
+- ML-based visual matching
+- More sophisticated reconstruction
+- Advanced PDF handling
+- More powerful editing tools
+- Performance optimization
+
+# **ERROR HANDLING**
+
+Never silently fail.
+
+If OCR fails:
+
+Explain the problem and allow retry/manual editing.
+
+If a font cannot be identified:
+
+Use the closest visual candidate and communicate that it is an estimate.
+
+If reconstruction is uncertain:
+
+Provide a fallback rather than corrupting the original.
+
+If a document is too large:
+
+Warn the user and offer progressive processing where possible.
+
+If PDF parsing fails:
+
+Explain the issue without exposing technical errors unnecessarily.
+
+Always preserve the original.
+
+# **CONFIDENCE**
+
+The application should track confidence where useful.
+
+Examples:
+
+OCR confidence
+
+Typography confidence
+
+Layout confidence
+
+Background reconstruction confidence
+
+Low confidence should not prevent editing.
+
+It should help the user understand where automatic processing may require manual correction.
+
+# **DOCUMENT COMPARISON**
+
+Provide an optional comparison mode:
+
+Original
+
+vs
+
+Edited
+
+Possible modes:
+
+- Side-by-side
+- Overlay
+- Difference view
+
+This is especially important for visual fidelity testing.
+
+# **PROVENANCE**
+
+The original file should remain distinguishable internally from generated output.
+
+Maintain project metadata such as:
+
+- Original file
+- Processing version
+- Edit history
+- Generated output
+- Processing settings
+
+Do not silently overwrite the original source.
+
+# **FUTURE FEATURES**
+
+Potential future features include:
+
+- Search and replace
+- Batch text replacement
+- Multiple document projects
+- Template matching
+- Advanced form editing
+- OCR language packs
+- Better multilingual OCR
+- Custom font matching
+- Advanced image restoration
+- Document comparison
+- Version history
+- Offline-first PWA
+- Optional cloud synchronization
+
+These should not compromise the client-side-first architecture.
+
+# **INTERNATIONALIZATION**
+
+Do not design the system only around English.
+
+The architecture should eventually support:
+
+- Latin scripts
+- Devanagari
+- Arabic
+- Cyrillic
+- CJK
+- Other OCR-supported writing systems
+
+Typography analysis must be designed so additional writing systems can be supported later.
+
+# **IMPORTANT TECHNICAL REALITY**
+
+Do not claim that every scanned document can be reconstructed with mathematically perfect accuracy.
+
+A raster scan may not contain:
+
+- Original font metadata
+- Exact font name
+- Original vector glyphs
+- Original text encoding
+- Original layers
+- Original background information
+
+Therefore the system must use visual inference.
+
+The objective is:
+
+MAXIMUM PRACTICAL VISUAL FIDELITY.
+
+The application should always try to improve its reconstruction rather than pretending that an uncertain result is exact.
+
+# **WHAT CLAUDE MUST NOT DO**
+
+Do not:
+
+- Turn IntelliDoc into a basic OCR converter.
+- Replace the original image with plain HTML text.
+- Use a generic font without analysis.
+- Put a white rectangle behind replacement text by default.
+- Hard-code positions from sample documents.
+- Build the entire system around one OCR engine.
+- Put heavy OCR processing on the main UI thread.
+- Send documents to a server unnecessarily.
+- Destroy the original document.
+- Build only a demo without a scalable architecture.
+- Optimize only for one sample document.
+- Ignore low-quality scans.
+- Ignore typography.
+- Ignore background reconstruction.
+- Ignore visual comparison.
+- Hide technical limitations.
+- Create giant monolithic components.
+
+# **CLAUDE’S DEVELOPMENT BEHAVIOR**
+
+Act as the lead architect and senior engineer for the entire IntelliDoc project.
+
+Before implementing major features:
+
+1. Understand the document model.
+2. Check the existing architecture.
+3. Check whether the feature already has an appropriate module.
+4. Reuse existing abstractions.
+5. Avoid unnecessary dependencies.
+6. Consider performance.
+7. Consider privacy.
+8. Consider future extensibility.
+9. Implement incrementally.
+10. Test the result.
+
+When making architectural decisions, prioritize:
+
+1. Visual fidelity
+2. Correctness
+3. Document integrity
+4. Privacy
+5. Performance
+6. Maintainability
+7. UX polish
+
+Do not rewrite working systems unnecessarily.
+
+Do not introduce large dependencies without justification.
+
+Do not create temporary hacks that become permanent architecture.
+
+If a feature requires a temporary approximation, isolate it behind an interface so it can later be replaced.
+
+# **DEFINITION OF DONE**
+
+A feature is not complete simply because it works technically.
+
+It is complete when:
+
+- It works correctly.
+- It integrates with the document model.
+- It does not unnecessarily damage visual fidelity.
+- It does not break existing functionality.
+- It works with realistic documents.
+- Errors are handled.
+- Performance is reasonable.
+- The code is maintainable.
+- Important behavior is tested.
+- It respects client-side privacy.
+- It does not introduce unnecessary architectural debt.
+
+# **CORE SUCCESS CRITERIA**
+
+The project succeeds when a user can:
+
+1. Upload a scanned document.
+2. Let IntelliDoc recognize its content.
+3. See the recognized text in its original location.
+4. Edit the text directly.
+5. Have the original text removed naturally.
+6. Have the background reconstructed.
+7. Have the replacement text rendered with matching visual characteristics.
+8. Preview the result.
+9. Export the final document.
+10. Feel that the document still visually belongs to the original scan.
+
+The quality of the reconstruction is more important than simply achieving OCR accuracy.
+
+# **CORE PRODUCT PRINCIPLE**
+
+IntelliDoc is fundamentally a:
+
+CLIENT-SIDE VISUAL DOCUMENT RECONSTRUCTION SYSTEM
+
+with OCR and editing capabilities.
+
+OCR tells the application WHAT the document says.
+
+Layout analysis tells it WHERE things are.
+
+Typography analysis tells it HOW the text looks.
+
+Background reconstruction determines WHAT should remain behind the edited text.
+
+The rendering engine recreates the document.
+
+The visual optimization engine improves the match.
+
+The editor allows the user to change the content.
+
+The export engine produces the final document.
+
+All of these systems must work together.
+
+# **FINAL INSTRUCTION TO CLAUDE**
+
+Build IntelliDoc as a serious production-quality application, not as a simple proof-of-concept OCR editor.
+
+Always keep the core objective in mind:
+
+“Allow users to edit text inside scanned documents while preserving the original visual appearance as closely as technically possible.”
+
+Every major engineering decision should be evaluated against that objective.
+
+When forced to choose between a quick implementation and an architecture that supports high-fidelity reconstruction, prefer the architecture that preserves the long-term goal.
+
+Build incrementally.
+
+Keep the original document safe.
+
+Keep processing client-side.
+
+Keep the document model as the source of truth.
+
+Keep OCR, vision, typography, reconstruction, rendering, and export modular.
+
+Measure visual quality wherever possible.
+
+Improve the system through real benchmark documents.
+
+Do not confuse “text recognized correctly” with “document reconstructed correctly.”
+
+The ultimate output is not just correct text.
+
+The ultimate output is a visually faithful reconstructed document.

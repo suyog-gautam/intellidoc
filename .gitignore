@@ -1,0 +1,19 @@
+# dependencies & build output
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# generated at install time from node_modules (see scripts/copy-vendor-assets.mjs)
+public/vendor/
+
+# local work: never commit sample documents or their derived images
+test files/
+output/
+.scratch/
+
+# env / OS noise
+.env*
+.DS_Store
+Thumbs.db

@@ -1,0 +1,71 @@
+# Test, build and deploy IntelliDoc to GitHub Pages on every push to main.
+# The site is fully static: all document processing happens in the browser.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer push supersedes a running one.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Also runs postinstall: copies OCR model, WASM and fonts into public/vendor.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      # Project pages are served under /<repo>; user/org pages (<name>.github.io) at the root.
+      - name: Determine base path
+        run: |
+          name="${GITHUB_REPOSITORY#*/}"
+          if [[ "$name" == *.github.io ]]; then base=""; else base="/$name"; fi
+          echo "NEXT_PUBLIC_BASE_PATH=$base" >> "$GITHUB_ENV"
+          echo "Base path: '${base}'"
+
+      - name: Build static site
+        run: npm run build:pages
+
+      # Pages must not run the output through Jekyll (it drops the _next/ folder).
+      - name: Disable Jekyll
+        run: touch out/.nojekyll
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
