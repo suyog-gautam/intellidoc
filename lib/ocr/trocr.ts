@@ -46,7 +46,8 @@ export class TrocrEngine {
         this.assets.json('vocab.json') as Promise<string[]>,
         this.assets.json('generation_config.json') as Promise<{ decoder_start_token_id: number; eos_token_id: number }>,
       ]);
-      const opts: Ort.InferenceSession.SessionOptions = { executionProviders: ['wasm'], graphOptimizationLevel: 'all' };
+      // No memory arena or pattern planning: one small batch at a time, and a smaller WASM heap matters more on phones.
+      const opts: Ort.InferenceSession.SessionOptions = { executionProviders: ['wasm'], graphOptimizationLevel: 'all', enableCpuMemArena: false, enableMemPattern: false };
       const [encoder, decoder] = await Promise.all([this.ort.InferenceSession.create(enc, opts), this.ort.InferenceSession.create(dec, opts)]);
       return { encoder, decoder, vocab, start: gen.decoder_start_token_id, eos: gen.eos_token_id };
     })());

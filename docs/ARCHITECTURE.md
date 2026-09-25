@@ -46,7 +46,25 @@ original file ──► validate ──► PageSource (image | pdf.js) ──►
 - **Deferred until needed:** the editor UI, the document session (tesseract.js, pdf.js) and the processing worker load on demand. They're prefetched when the user hovers or focuses the upload card, or drags a file over it.
 - **Candidate fonts:** 85 families, cut into ~2,500 file slices by unicode range (one CSS family per slice, listed in `core/typography/fontFaces.json`). The worker loads only the slices of the candidate fonts and characters at hand, e.g. a few of a CJK font's ~100 slices. `/vendor/*` is served with long cache lifetimes. See `docs/MULTILINGUAL_AND_HANDWRITING.md`.
 - **OCR languages:** Auto-detect by default (OSD script detection + headline detection + browser locale), or up to 3 picked on the start screen. Only the needed Tesseract models download.
-- **Static site size:** `public/vendor` is ~165 MB (fonts ~62 MB, OCR models and engines ~96 MB); a visitor downloads only what their document needs.
+- **Static site size:** `public/vendor` is ~245 MB: fonts ~62 MB, OCR models and engines ~96 MB, and the handwriting model plus its runtime ~78 MB. A visitor downloads only what their document needs.
+
+## Memory and low-end devices
+Memory runs out long before CPU does. Measured on phone photos, a 3.7 MP challan whose small print is upscaled 3× for OCR used to peak at ~2.2 GB in the browser. Low-end phones give a tab well under 1 GB. `lib/browser/deviceProfile.ts` sorts devices into three tiers from `navigator.deviceMemory` and core count; browsers that don't report memory count as mid. Each tier gets its own budgets:
+
+| Budget | high (≥ 8 GB) | mid | low (≤ 2 GB or ≤ 2 cores) |
+|---|---|---|---|
+| Uploaded image kept for editing (larger ones are downscaled, with a notice) | 40 MP | 16 MP | 9 MP |
+| OCR working image (small print upscaled) | 40 MP | 20 MP | 10 MP |
+| Decoded pages kept in the worker (the rest are compressed to PNG) | 600 MB | 250 MB | 100 MB |
+| Handwriting read automatically | yes | yes | only on request, and never with Save-Data |
+
+The same rules apply on every tier:
+- The OSD language-detection worker is freed right after use. It holds its own copy of the upscaled page, ~500 MB on the challan.
+- The headline-probe strip always gets the unconstrained OCR scale, so language detection is the same on every device.
+- On mid and low tiers, the OCR worker is freed once every page is read.
+- The handwriting model runs without ONNX Runtime's memory arena and unloads after 60 s idle.
+
+Handwriting readings arrive line by line, with a "Reading handwriting n/m" status.
 
 ## Rendering layers
 

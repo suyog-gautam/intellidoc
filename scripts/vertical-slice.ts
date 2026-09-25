@@ -33,7 +33,7 @@ import { scaleOcrResult, type OcrResult } from '@/core/ocr/types';
 import { analyzeElement, clipSlotToNeighbours } from '@/core/pipeline/analyzeElement';
 import { buildDocument } from '@/core/pipeline/buildDocument';
 import { renderPage } from '@/core/rendering/pageRenderer';
-import { estimatePageSkew, estimateTextHeight, grayToRaster, normalizeIllumination, prepareOcrImage } from '@/core/vision/preprocess';
+import { ocrStrip, estimatePageSkew, estimateTextHeight, grayToRaster, normalizeIllumination, prepareOcrImage, type OcrWorkingCopy } from '@/core/vision/preprocess';
 import { createNodeRasterizer, decodeImageFile, encodePng, writePng } from '@/lib/node/nodeRuntime';
 import { openNodePdf } from '@/lib/node/nodePdf';
 
@@ -163,7 +163,8 @@ function engineFor(languages: readonly string[]): TesseractEngine {
  * choice; otherwise "auto" runs the same detection as the browser (OSD,
  * headline words + probe, locale from SLICE_LOCALES, e.g. ne-NP).
  */
-async function detectLanguages(original: RasterImage, ocrImage: RasterImage, ocrPng: Uint8Array, textHeight: number, scale: number): Promise<string[]> {
+async function detectLanguages(original: RasterImage, working: OcrWorkingCopy, ocrPng: Uint8Array): Promise<string[]> {
+  const { textHeight, scale } = working;
   const forced = process.env.SLICE_LANGUAGES;
   if (forced && forced !== 'auto') return normalizeLanguages(forced.split(','));
   const locales = (process.env.SLICE_LOCALES ?? 'en').split(',');
@@ -171,9 +172,9 @@ async function detectLanguages(original: RasterImage, ocrImage: RasterImage, ocr
   const headlines = findHeadlineWords(original, textHeight);
   let headlineProbeText: string | undefined;
   if (headlines.words >= MIN_HEADLINE_WORDS && headlines.band) {
-    // Like the app: the band is read from the OCR working copy (upscaled for small text).
+    // Like the app: the band gets the ideal OCR scale, whatever the page's pixel budget allowed.
     const b = headlines.band;
-    const band = cropRaster(ocrImage, { x: 0, y: Math.floor(b.y * scale), width: ocrImage.width, height: Math.ceil(b.height * scale) });
+    const band = grayToRaster(ocrStrip(working, b.y, b.height));
     const probe = await engineFor(HEADLINE_PROBE_LANGUAGES).recognize({ kind: 'bytes', bytes: new Uint8Array(encodePng(band)) });
     headlineProbeText = probe.words.map((w) => w.text).join(' ');
     console.log(`Headline probe: ${headlineProbeText.slice(0, 120)}`);
@@ -193,11 +194,12 @@ async function processImage(input: InputPage) {
 
   let t = Date.now();
   const skew = estimatePageSkew(original);
-  const working = prepareOcrImage(original);
+  // SLICE_OCR_PIXELS simulates a device budget (lib/browser/deviceProfile.ts), e.g. 10000000 for low-end phones.
+  const working = prepareOcrImage(original, process.env.SLICE_OCR_PIXELS ? Number(process.env.SLICE_OCR_PIXELS) : undefined);
   const ocrInput = encodePng(grayToRaster(working.image));
   console.log(`\n=== ${name} (${original.width}x${original.height}) skew=${((skew.angle * 180) / Math.PI).toFixed(2)}° text≈${working.textHeight}px ocrScale=${working.scale} prep ${Date.now() - t}ms`);
 
-  const languages = await detectLanguages(original, grayToRaster(working.image), new Uint8Array(ocrInput), working.textHeight, working.scale);
+  const languages = await detectLanguages(original, working, new Uint8Array(ocrInput));
   const engine = engineFor(languages);
   const fitContext: FitOptions = { contextScripts: scriptsOfLanguages(languages), cjkRegions: cjkRegionsOfLanguages(languages) };
 

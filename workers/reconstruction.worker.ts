@@ -10,11 +10,12 @@ import { renderPage } from '@/core/rendering/pageRenderer';
 import { CanvasTextRasterizer, type CanvasLike } from '@/core/rendering/textRasterizer';
 import { pageContentFromOcr } from '@/core/pipeline/buildDocument';
 import { cropForLineOcr, findRecoveryRegions } from '@/core/ocr/recovery';
-import { estimatePageSkew, estimateTextHeight, grayToRaster, normalizeIllumination, prepareOcrImage } from '@/core/vision/preprocess';
+import { ocrStrip, estimatePageSkew, estimateTextHeight, grayToRaster, normalizeIllumination, prepareOcrImage } from '@/core/vision/preprocess';
 import { findHeadlineWords } from '@/core/vision/headlines';
 import { findHandwritingLines } from '@/core/ocr/handwritingPass';
 import { prepareHandwritingLine } from '@/core/ocr/handwritingLine';
 import { cropRaster } from '@/core/image/raster';
+import { deviceBudgets } from '@/lib/browser/deviceProfile';
 import { cjkRegionsOfLanguages, scriptsOfLanguages } from '@/core/ocr/languages';
 import type { Page } from '@/core/document/model';
 import { elementIsModified } from '@/core/document/model';
@@ -61,18 +62,22 @@ async function encode(img: RasterImage, type: string, quality?: number): Promise
   return canvas.convertToBlob({ type, quality });
 }
 
-const store = new PageStore({
-  encode: (img) => encode(img, 'image/png'),
-  async decode(blob) {
-    const bitmap = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
-    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-    const ctx = canvas.getContext('2d')!;
-    ctx.drawImage(bitmap, 0, 0);
-    bitmap.close();
-    const d = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    return { width: d.width, height: d.height, data: d.data };
+const store = new PageStore(
+  {
+    encode: (img) => encode(img, 'image/png'),
+    async decode(blob) {
+      const bitmap = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(bitmap, 0, 0);
+      bitmap.close();
+      const d = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      return { width: d.width, height: d.height, data: d.data };
+    },
   },
-});
+  // Decoded pages kept in memory, per device (older pages are compressed to PNG).
+  deviceBudgets().pageCacheBytes,
+);
 
 function post(msg: WorkerResponse, transfer: Transferable[] = []) {
   self.postMessage(msg, transfer);
@@ -92,20 +97,15 @@ async function handle(req: WorkerRequest): Promise<void> {
     case 'preprocess': {
       const page = await store.get(req.pageKey);
       const skew = estimatePageSkew(page);
-      const working = prepareOcrImage(page);
-      const ocrRaster = grayToRaster(working.image);
-      const ocrImage = await encode(ocrRaster, 'image/png');
+      const working = prepareOcrImage(page, req.ocrPixels);
       let headlines: { words: number; band?: Blob } | undefined;
       if (req.findHeadlines) {
         const found = findHeadlineWords(page, working.textHeight);
-        const band = found.band && {
-          x: 0,
-          y: Math.floor(found.band.y * working.scale),
-          width: ocrRaster.width,
-          height: Math.min(ocrRaster.height - Math.floor(found.band.y * working.scale), Math.ceil(found.band.height * working.scale)),
-        };
-        headlines = { words: found.words, band: band && band.height > 0 ? await encode(cropRaster(ocrRaster, band), 'image/png') : undefined };
+        // The probe strip is small, so it always gets the ideal OCR scale even when the page had to be scaled less.
+        const band = found.band && ocrStrip(working, found.band.y, found.band.height);
+        headlines = { words: found.words, band: band && band.height > 0 ? await encode(grayToRaster(band), 'image/png') : undefined };
       }
+      const ocrImage = await encode(grayToRaster(working.image), 'image/png');
       post({ type: 'preprocessed', id: req.id, ocrImage, skew: skew.angle, ocrScale: working.scale, headlines });
       return;
     }

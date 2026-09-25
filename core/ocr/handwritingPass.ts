@@ -245,11 +245,15 @@ export function applyHandwritingReadings(
     const els = g.elementIds.map((id) => content.textElements.find((e) => e.id === id)!).filter(Boolean);
     // The model reads English: never replace text the page OCR read in another script.
     if (els.some((e) => [...scriptsOf(e.sourceText)].some((sc) => sc !== 'latin'))) return;
+    // Same text as the page OCR: nothing to fix, and its (often higher) confidence stays.
+    const squash = (t: string) => t.replace(/\s+/g, '').toLowerCase();
+    if (els.length && squash(els.map((e) => e.sourceText).join('')) === squash(r.text)) return;
     const inner = { x: g.rect.x, y: g.rect.y, width: g.rect.width, height: g.rect.height };
     const bbox = els.length ? unionRects([...els.map((e) => e.bbox), shrink(inner)]) : shrink(inner);
-    // Text Tesseract missed completely becomes a new element on its own line.
+    // Text Tesseract missed completely becomes a new element on its own line (ids from its position: lines arrive one by one).
+    const key = `${Math.round(g.rect.x)}-${Math.round(g.rect.y)}`;
     const first: TextElement = els[0] ?? {
-      id: `${pageId}-hw${i}`,
+      id: `${pageId}-hw${key}`,
       pageId,
       sourceText: '',
       text: '',
@@ -257,7 +261,7 @@ export function applyHandwritingReadings(
       box: orientedFromAxisAligned(bbox, skew),
       ocrConfidence: 0,
       readingOrder: content.textElements.length + i,
-      lineId: `${pageId}-hwl${i}`,
+      lineId: `${pageId}-hwl${key}`,
       words: [],
       state: 'original',
       alignment: 'left',

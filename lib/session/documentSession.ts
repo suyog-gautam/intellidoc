@@ -9,12 +9,18 @@ import { OcrError, scaleOcrResult, type OcrEngine, type OcrResult } from '@/core
 import { createDocumentSkeleton } from '@/core/pipeline/buildDocument';
 import { MAX_PIXELS, sha256Hex, UploadError, validateUpload } from '@/lib/image/validateUpload';
 import { imagePageSource, type PageSource } from '@/lib/pdf/pageSource';
-import { PdfInputError } from '@/lib/pdf/pdfPageSource';
+import { DEFAULT_MAX_PIXELS_PER_PAGE, PdfInputError } from '@/lib/pdf/pdfPageSource';
 import { vendorUrl } from '@/lib/browser/paths';
+import { deviceBudgets } from '@/lib/browser/deviceProfile';
 import type { ReconstructionClient } from '@/lib/workers/reconstructionClient';
 import { handwritingAvailable, HandwritingClient } from '@/lib/workers/handwritingClient';
 import type { HandwritingReading } from '@/core/ocr/handwritingPass';
 import type { Rect } from '@/core/geometry';
+
+/** Background work the editor shows while it stays usable. */
+export interface SessionActivity {
+  handwriting?: { pageId: string; done: number; total: number };
+}
 
 export interface OpenProgress {
   stage: 'validating' | 'decoding' | 'rendering' | 'preprocessing' | 'detecting' | 'ocr' | 'recovery' | 'building';
@@ -39,6 +45,12 @@ function createEngine(languages: readonly string[]): TesseractEngine {
   });
 }
 
+/** Frees the OCR worker (its models and last page image) until the next document needs it. */
+function releaseOcr(): void {
+  void sharedOcr?.engine.dispose();
+  sharedOcr = undefined;
+}
+
 function ocrEngine(languages: readonly string[]): OcrEngine {
   const key = languages.join('+');
   if (sharedOcr?.key !== key) {
@@ -48,8 +60,6 @@ function ocrEngine(languages: readonly string[]): OcrEngine {
   return sharedOcr.engine;
 }
 
-/** Engine used only for script detection (legacy OSD worker + headline probe), kept for later documents. */
-let detectionEngine: TesseractEngine | undefined;
 
 function browserLocales(): string[] {
   try {
@@ -67,8 +77,12 @@ function browserLocales(): string[] {
  */
 async function detectLanguages(ocrImage: Blob, headlines: { words: number; band?: Blob } | undefined): Promise<LanguageChoice> {
   const locales = browserLocales();
-  detectionEngine ??= createEngine(['eng']);
-  const osd = await detectionEngine.detectScript({ kind: 'blob', blob: ocrImage }).catch(() => undefined);
+  // Released right after: the OSD worker holds its own copy of the page (hundreds of MB for upscaled photos).
+  const detector = createEngine(['eng']);
+  const osd = await detector
+    .detectScript({ kind: 'blob', blob: ocrImage })
+    .catch(() => undefined)
+    .finally(() => void detector.dispose());
   let headlineProbeText: string | undefined;
   if (headlines && headlines.words >= MIN_HEADLINE_WORDS && headlines.band) {
     const probe = createEngine(HEADLINE_PROBE_LANGUAGES);
@@ -84,7 +98,8 @@ async function detectLanguages(ocrImage: Blob, headlines: { words: number; band?
   return chooseLanguages({ osd, headlineWords: headlines?.words ?? 0, headlineProbeText, locales });
 }
 
-async function decodeImage(blob: Blob): Promise<RasterImage> {
+/** Decodes an uploaded image, downscaled to what this device can hold (`maxPixels`). */
+async function decodeImage(blob: Blob, maxPixels: number, warnings: string[]): Promise<RasterImage> {
   let bitmap: ImageBitmap;
   try {
     bitmap = await createImageBitmap(blob, { imageOrientation: 'from-image' });
@@ -95,17 +110,22 @@ async function decodeImage(blob: Blob): Promise<RasterImage> {
     if (bitmap.width * bitmap.height > MAX_PIXELS) {
       throw new UploadError(`The image is too large (${bitmap.width}x${bitmap.height}). Please use a scan under ${MAX_PIXELS / 1e6} megapixels.`);
     }
-    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const k = Math.min(1, Math.sqrt(maxPixels / (bitmap.width * bitmap.height)));
+    const width = Math.max(1, Math.round(bitmap.width * k));
+    const height = Math.max(1, Math.round(bitmap.height * k));
+    if (k < 1) warnings.push(`The image was reduced from ${bitmap.width}×${bitmap.height} to ${width}×${height} pixels to fit this device's memory.`);
+    const canvas = new OffscreenCanvas(width, height);
     const ctx = canvas.getContext('2d')!;
-    ctx.drawImage(bitmap, 0, 0);
-    const data = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    const data = ctx.getImageData(0, 0, width, height);
     return { width: data.width, height: data.height, data: data.data };
   } finally {
     bitmap.close();
   }
 }
 
-async function openPdf(bytes: Uint8Array): Promise<PageSource> {
+async function openPdf(bytes: Uint8Array, maxPixelsPerPage: number): Promise<PageSource> {
   // Loaded on demand so image-only users never download pdf.js.
   const [pdfjs, { openPdfSource }] = await Promise.all([import('pdfjs-dist'), import('@/lib/pdf/pdfPageSource')]);
   pdfjs.GlobalWorkerOptions.workerSrc = vendorUrl('pdfjs/pdf.worker.min.mjs');
@@ -115,6 +135,7 @@ async function openPdf(bytes: Uint8Array): Promise<PageSource> {
     wasmUrl: vendorUrl('pdfjs/wasm/'),
     iccUrl: vendorUrl('pdfjs/iccs/'),
     createCanvas: (w, h) => new OffscreenCanvas(w, h),
+    maxPixelsPerPage,
   });
 }
 
@@ -133,8 +154,11 @@ function userMessage(e: unknown): string {
 export class DocumentSession {
   readonly warnings: string[] = [];
   private listener: ((cmd: EditCommand) => void) | undefined;
+  private activityListener: ((a: SessionActivity) => void) | undefined;
+  private activity: SessionActivity = {};
   private backlog: EditCommand[] = [];
   private disposed = false;
+  private readonly budgets = deviceBudgets();
   private handwriting: HandwritingClient | undefined;
   /** Handwriting passes run one page at a time, after OCR (the model is slow: ~1 s per line). */
   private handwritingQueue: Promise<void> = Promise.resolve();
@@ -163,7 +187,12 @@ export class DocumentSession {
     const sha256 = await sha256Hex(bytes.slice().buffer);
 
     onProgress({ stage: 'decoding' });
-    const source = format === 'application/pdf' ? await openPdf(bytes) : imagePageSource(await decodeImage(new Blob([bytes], { type: format })));
+    const budgets = deviceBudgets();
+    const warnings: string[] = [];
+    const source =
+      format === 'application/pdf'
+        ? await openPdf(bytes, Math.min(DEFAULT_MAX_PIXELS_PER_PAGE, budgets.imagePixels))
+        : imagePageSource(await decodeImage(new Blob([bytes], { type: format }), budgets.imagePixels, warnings));
 
     const skeleton = await Promise.all(
       Array.from({ length: source.pageCount }, async (_, i) => ({ sourceRef: `${sha256.slice(0, 16)}-p${i}`, physical: await source.physicalSize(i) })),
@@ -175,6 +204,7 @@ export class DocumentSession {
       languages,
     );
     const session = new DocumentSession(doc, source, client, languages);
+    session.warnings.push(...warnings);
     if (source.skippedPages > 0) session.warnings.push(`Only the first ${source.pageCount} pages were loaded (${source.skippedPages} more in the file).`);
 
     try {
@@ -203,6 +233,20 @@ export class DocumentSession {
     };
   }
 
+  /** Receive background activity (e.g. handwriting reading progress); called with the current state at once. */
+  subscribeActivity(listener: (a: SessionActivity) => void): () => void {
+    this.activityListener = listener;
+    listener(this.activity);
+    return () => {
+      if (this.activityListener === listener) this.activityListener = undefined;
+    };
+  }
+
+  private setActivity(a: SessionActivity) {
+    this.activity = a;
+    if (!this.disposed) this.activityListener?.(a);
+  }
+
   private emit(cmd: EditCommand) {
     if (this.disposed) return;
     if (this.listener) this.listener(cmd);
@@ -216,7 +260,7 @@ export class DocumentSession {
 
     onProgress({ stage: 'preprocessing' });
     const auto = this.langs[0] === AUTO;
-    const { ocrImage, skew, ocrScale, headlines } = await this.client.preprocess(page.sourceRef, auto);
+    const { ocrImage, skew, ocrScale, headlines } = await this.client.preprocess(page.sourceRef, auto, this.budgets.ocrPixels);
     if (auto) {
       onProgress({ stage: 'detecting' });
       this.detection = await detectLanguages(ocrImage, headlines);
@@ -267,6 +311,8 @@ export class DocumentSession {
         this.emit({ type: 'updatePage', pageId: page.id, patch: { status: 'failed', statusMessage: userMessage(e) } });
       }
     }
+    // Every page is read: on smaller devices give the OCR worker's memory back to editing.
+    if (this.budgets.tier !== 'high' && !this.disposed) releaseOcr();
   }
 
   /** A shared handwriting reader (for the editor's "Read as handwriting"), or undefined if the model isn't deployed. */
@@ -296,7 +342,8 @@ export class DocumentSession {
    * the user hasn't touched meanwhile. English-only model, so Latin documents only.
    */
   private queueHandwriting(page: Page): void {
-    if (!scriptsOfLanguages(this.langs).includes('latin')) return;
+    // Low-end devices read handwriting only on request ("Read as handwriting"): the model needs ~300 MB.
+    if (!this.budgets.autoHandwriting || !scriptsOfLanguages(this.langs).includes('latin')) return;
     const elements: TextElement[] = page.textElements;
     this.handwritingQueue = this.handwritingQueue.then(async () => {
       try {
@@ -304,15 +351,18 @@ export class DocumentSession {
         if (!reader) return;
         const lines = (await this.client.handwritingLines(page.sourceRef, elements)).slice(0, MAX_HANDWRITING_LINES);
         if (!lines.length || this.disposed) return;
-        const readings = [];
-        for (const line of lines) {
+        // Each line is applied as soon as it is read, so the text improves while the user works.
+        for (const [i, { image, ...group }] of lines.entries()) {
           if (this.disposed) return;
-          readings.push(await reader.recognize(line.image));
+          this.setActivity({ handwriting: { pageId: page.id, done: i, total: lines.length } });
+          const reading = await reader.recognize(image);
+          if (reading) this.emit({ type: 'readHandwriting', pageId: page.id, groups: [group], readings: [reading] });
         }
-        this.emit({ type: 'readHandwriting', pageId: page.id, groups: lines.map(({ elementIds, rect }) => ({ elementIds, rect })), readings });
       } catch (e) {
         // Handwriting reading only improves results; never fail a page because of it.
         console.warn('Handwriting pass skipped', e);
+      } finally {
+        this.setActivity({});
       }
     });
   }

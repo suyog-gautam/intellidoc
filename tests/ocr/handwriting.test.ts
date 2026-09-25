@@ -62,7 +62,7 @@ describe('handwriting readings', () => {
     const d = doc();
     const out = applyHandwritingReadings(d.pages[0], [{ elementIds: [], rect: { x: 100, y: 300, width: 200, height: 40 } }], [{ text: '208310610', confidence: 0.7 }], 0, 'p0');
     const added = out.textElements.find((e) => e.text === '208310610')!;
-    expect(added).toMatchObject({ id: 'p0-hw0', recognizer: 'handwriting' });
+    expect(added).toMatchObject({ id: 'p0-hw100-300', recognizer: 'handwriting' });
     expect(out.layout.lines.some((l) => l.elementIds.includes(added.id))).toBe(true);
   });
 
@@ -72,6 +72,14 @@ describe('handwriting readings', () => {
     const page = { ...d.pages[0], textElements: d.pages[0].textElements.map((e) => (e.id === id ? { ...e, sourceText: 'नेपाल' } : e)) };
     const out = applyHandwritingReadings(page, [{ elementIds: [id], rect: line }], [{ text: 'Rival Bag House', confidence: 0.9 }], 0, 'p0');
     expect(out).toBe(page);
+  });
+
+  it('leaves elements alone when the reading agrees with the page OCR', () => {
+    const d = doc();
+    const ids = handwrittenIds(d);
+    const same = d.pages[0].textElements.filter((e) => ids.includes(e.id)).map((e) => e.sourceText).join(' ');
+    const out = applyHandwritingReadings(d.pages[0], [{ elementIds: ids, rect: line }], [{ text: same.toUpperCase(), confidence: 0.99 }], 0, 'p0');
+    expect(out).toBe(d.pages[0]);
   });
 
   it('keeps doubtful readings out', () => {

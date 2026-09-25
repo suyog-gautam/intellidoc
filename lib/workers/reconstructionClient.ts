@@ -46,8 +46,8 @@ export class ReconstructionClient {
   }
 
   /** OCR working copy (illumination-flattened, upscaled for small text) and page skew. */
-  async preprocess(pageKey: string, findHeadlines = false): Promise<{ ocrImage: Blob; skew: number; ocrScale: number; headlines?: { words: number; band?: Blob } }> {
-    const r = await this.call({ type: 'preprocess', pageKey, findHeadlines });
+  async preprocess(pageKey: string, findHeadlines = false, ocrPixels?: number): Promise<{ ocrImage: Blob; skew: number; ocrScale: number; headlines?: { words: number; band?: Blob } }> {
+    const r = await this.call({ type: 'preprocess', pageKey, findHeadlines, ocrPixels });
     if (r.type !== 'preprocessed') throw new Error('Unexpected worker response');
     return { ocrImage: r.ocrImage, skew: r.skew, ocrScale: r.ocrScale, headlines: r.headlines };
   }

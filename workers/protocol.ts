@@ -11,7 +11,7 @@ import type { Rect } from '@/core/geometry';
 export type WorkerRequest =
   | { type: 'loadPage'; id: number; pageKey: string; width: number; height: number; buffer: ArrayBuffer }
   /** `findHeadlines`: also look for headline-joined words (Devanagari, Bengali, Gurmukhi) for script auto-detection. */
-  | { type: 'preprocess'; id: number; pageKey: string; findHeadlines?: boolean }
+  | { type: 'preprocess'; id: number; pageKey: string; findHeadlines?: boolean; ocrPixels?: number }
   /** Layout from OCR words + page pixels (word styles, style-aware runs). OCR in page coordinates. */
   | { type: 'buildPage'; id: number; pageKey: string; pageId: string; ocr: OcrResult; skew: number }
   /** OCR recovery: crops of low-confidence words and uncovered text, for single-line re-recognition. */

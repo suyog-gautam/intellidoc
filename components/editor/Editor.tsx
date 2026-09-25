@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import type { Point } from '@/core/geometry';
 import { canExportPdf, exportPageImage, exportPdf } from '@/lib/browser/exportDocument';
-import type { DocumentSession } from '@/lib/session/documentSession';
+import type { DocumentSession, SessionActivity } from '@/lib/session/documentSession';
 import { getOcrLanguage } from '@/core/ocr/languages';
 import type { ReconstructionClient } from '@/lib/workers/reconstructionClient';
 import { AppHeader } from '../AppHeader';
@@ -44,6 +44,8 @@ export function Editor({ client, session, onClose }: { client: ReconstructionCli
 
   const doc = ed.history.present;
   const [canReadHandwriting, setCanReadHandwriting] = useState(false);
+  const [activity, setActivity] = useState<SessionActivity>({});
+  useEffect(() => session.subscribeActivity(setActivity), [session]);
   useEffect(() => {
     let live = true;
     void session.canReadHandwriting().then((ok) => live && setCanReadHandwriting(ok));
@@ -143,7 +145,9 @@ export function Editor({ client, session, onClose }: { client: ReconstructionCli
 
   const onMove = (id: string, dx: number, dy: number) => ed.run({ type: 'moveElement', elementId: id, dx, dy });
 
-  const status = ed.updating ? 'Updating…' : pagesDone < doc.pages.length ? `Reading pages ${pagesDone}/${doc.pages.length}` : undefined;
+  const hw = activity.handwriting;
+  const background = pagesDone < doc.pages.length ? `Reading pages ${pagesDone}/${doc.pages.length}` : hw ? `Reading handwriting ${hw.done + 1}/${hw.total}` : undefined;
+  const status = ed.updating ? 'Updating…' : background;
 
   const readHandwriting = async (elementId: string) => {
     const page = doc.pages.find((p) => p.textElements.some((e) => e.id === elementId));
@@ -307,6 +311,17 @@ export function Editor({ client, session, onClose }: { client: ReconstructionCli
               >
                 <Loader2 className="size-4 animate-spin" aria-hidden />
                 {ed.analyzing.size > 0 ? 'Matching the original style…' : 'Updating preview…'}
+              </div>
+            )}
+            {/* Phones have no toolbar status: say quietly why text may still change. */}
+            {!ed.updating && background && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="pointer-events-none absolute top-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full bg-surface px-3 py-1.5 text-[12px] font-medium whitespace-nowrap text-muted-foreground shadow-md md:hidden"
+              >
+                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                {background}
               </div>
             )}
           </div>

@@ -12,9 +12,13 @@ export function handwritingAvailable(): Promise<boolean> {
     .catch(() => false));
 }
 
-/** Promise façade over the handwriting worker, created on first use. */
+/** Unload the model after this long without work: it holds ~300 MB. */
+const IDLE_MS = 60_000;
+
+/** Promise façade over the handwriting worker, created on first use and released when idle. */
 export class HandwritingClient {
   private worker: Worker | undefined;
+  private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private nextId = 1;
   private readonly pending = new Map<number, (r: HandwritingResponse) => void>();
 
@@ -24,12 +28,14 @@ export class HandwritingClient {
       this.worker.onmessage = (ev: MessageEvent<HandwritingResponse>) => {
         this.pending.get(ev.data.id)?.(ev.data);
         this.pending.delete(ev.data.id);
+        if (!this.pending.size) this.idleTimer = setTimeout(() => this.dispose(), IDLE_MS);
       };
     }
     return this.worker;
   }
 
   recognize(img: RasterImage): Promise<HandwritingReading | undefined> {
+    clearTimeout(this.idleTimer);
     const id = this.nextId++;
     const copy = new Uint8ClampedArray(img.data);
     return new Promise((resolve) => {
@@ -39,6 +45,7 @@ export class HandwritingClient {
   }
 
   dispose(): void {
+    clearTimeout(this.idleTimer);
     this.worker?.terminate();
     this.worker = undefined;
     for (const done of this.pending.values()) done({ id: 0, error: 'disposed' });

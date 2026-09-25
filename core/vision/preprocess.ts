@@ -127,6 +127,19 @@ const OCR_TARGET_TEXT_HEIGHT = 30;
 /** Below this glyph height (px) recognition degrades sharply (~<150 DPI body text). */
 const OCR_MIN_TEXT_HEIGHT = 12;
 
+/**
+ * A full-width strip of the page (page coordinates y, height) at the
+ * reference OCR scale, so it reads the same on every device. Taken from the working image when it has that scale; otherwise
+ * (pixel budget) the strip alone is upscaled, which costs little memory.
+ */
+export function ocrStrip(w: OcrWorkingCopy, y: number, height: number): GrayImage {
+  const [src, s] = w.scale === w.referenceScale ? [w.image, w.scale] : [w.flat, 1];
+  const a = Math.max(0, Math.floor(y * s));
+  const b = Math.min(src.height, a + Math.ceil(height * s));
+  const strip = { width: src.width, height: Math.max(0, b - a), data: src.data.slice(a * src.width, b * src.width) };
+  return upscaleGray(strip, w.referenceScale / s);
+}
+
 /** Bilinear upscale of a gray image by an integer factor. */
 export function upscaleGray(img: GrayImage, factor: number): GrayImage {
   if (factor <= 1) return img;
@@ -154,7 +167,11 @@ export interface OcrWorkingCopy {
   image: GrayImage;
   /** OCR coordinates = page coordinates * scale. */
   scale: number;
+  /** The scale a device with the default pixel budget uses (≥ scale). */
+  referenceScale: number;
   textHeight: number;
+  /** The flattened page at scale 1 (for crops that need their own scale). */
+  flat: GrayImage;
 }
 
 /**
@@ -162,9 +179,17 @@ export interface OcrWorkingCopy {
  * is too small for reliable recognition (low-DPI scans, phone photos of whole
  * pages). Word boxes must be divided by `scale` to get page coordinates.
  */
-export function prepareOcrImage(img: RasterImage, maxPixels = 40_000_000): OcrWorkingCopy {
+export const DEFAULT_OCR_PIXELS = 40_000_000;
+
+export function prepareOcrImage(img: RasterImage, maxPixels = DEFAULT_OCR_PIXELS): OcrWorkingCopy {
   const textHeight = estimateTextHeight(img);
-  let scale = textHeight > 0 && textHeight < OCR_MIN_TEXT_HEIGHT ? Math.min(4, Math.round(OCR_TARGET_TEXT_HEIGHT / textHeight)) : 1;
-  while (scale > 1 && img.width * img.height * scale * scale > maxPixels) scale--;
-  return { image: upscaleGray(normalizeIllumination(img), scale), scale, textHeight };
+  const wanted = textHeight > 0 && textHeight < OCR_MIN_TEXT_HEIGHT ? Math.min(4, Math.round(OCR_TARGET_TEXT_HEIGHT / textHeight)) : 1;
+  const fit = (budget: number) => {
+    let s = wanted;
+    while (s > 1 && img.width * img.height * s * s > budget) s--;
+    return s;
+  };
+  const scale = fit(maxPixels);
+  const flat = normalizeIllumination(img);
+  return { image: upscaleGray(flat, scale), scale, referenceScale: Math.max(scale, fit(DEFAULT_OCR_PIXELS)), textHeight, flat };
 }
