@@ -21,7 +21,7 @@ export interface DeviceBudgets {
   ocrPixels: number;
   /** Decoded page rasters kept in memory before older pages are compressed. */
   pageCacheBytes: number;
-  /** Read handwriting automatically after OCR (else only on request). */
+  /** Read handwriting automatically after OCR (else only on request). Low-end devices do it after the OCR worker is freed. */
   autoHandwriting: boolean;
 }
 
@@ -48,5 +48,5 @@ const BUDGETS: Record<DeviceTier, Omit<DeviceBudgets, 'tier' | 'autoHandwriting'
 
 export function deviceBudgets(nav: NavigatorHints | undefined = typeof navigator === 'undefined' ? undefined : (navigator as NavigatorHints)): DeviceBudgets {
   const tier = deviceTier(nav);
-  return { tier, ...BUDGETS[tier], autoHandwriting: tier !== 'low' && !nav?.connection?.saveData };
+  return { tier, ...BUDGETS[tier], autoHandwriting: !nav?.connection?.saveData };
 }

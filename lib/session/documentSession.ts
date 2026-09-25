@@ -162,6 +162,9 @@ export class DocumentSession {
   private handwriting: HandwritingClient | undefined;
   /** Handwriting passes run one page at a time, after OCR (the model is slow: ~1 s per line). */
   private handwritingQueue: Promise<void> = Promise.resolve();
+  private finishOcr!: () => void;
+  /** Resolves once every page is read (and, on smaller devices, the OCR worker is freed). */
+  private readonly ocrFinished = new Promise<void>((resolve) => (this.finishOcr = resolve));
 
   private constructor(
     readonly initial: IntellidocDocument,
@@ -313,12 +316,18 @@ export class DocumentSession {
     }
     // Every page is read: on smaller devices give the OCR worker's memory back to editing.
     if (this.budgets.tier !== 'high' && !this.disposed) releaseOcr();
+    this.finishOcr();
   }
 
   /** A shared handwriting reader (for the editor's "Read as handwriting"), or undefined if the model isn't deployed. */
   async handwritingReader(): Promise<HandwritingClient | undefined> {
     if (this.disposed || !(await handwritingAvailable())) return undefined;
     return (this.handwriting ??= new HandwritingClient());
+  }
+
+  /** Is handwriting read automatically after OCR on this device? */
+  get autoHandwriting(): boolean {
+    return this.budgets.autoHandwriting;
   }
 
   /** Can "Read as handwriting" be offered? (English model deployed, Latin-script document.) */
@@ -342,11 +351,12 @@ export class DocumentSession {
    * the user hasn't touched meanwhile. English-only model, so Latin documents only.
    */
   private queueHandwriting(page: Page): void {
-    // Low-end devices read handwriting only on request ("Read as handwriting"): the model needs ~300 MB.
     if (!this.budgets.autoHandwriting || !scriptsOfLanguages(this.langs).includes('latin')) return;
     const elements: TextElement[] = page.textElements;
     this.handwritingQueue = this.handwritingQueue.then(async () => {
       try {
+        // Low-end devices never hold the OCR worker and the handwriting model (~300 MB) at once.
+        if (this.budgets.tier === 'low') await this.ocrFinished;
         const reader = await this.handwritingReader();
         if (!reader) return;
         const lines = (await this.client.handwritingLines(page.sourceRef, elements)).slice(0, MAX_HANDWRITING_LINES);

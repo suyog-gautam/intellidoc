@@ -192,7 +192,8 @@ export function PropertiesPanel(p: Props) {
               <span className="text-[12px] text-tertiary">Fix OCR mistakes here</span>
             </div>
             {element.recognizer === 'handwriting' && <p className="text-[12px] text-muted-foreground">Read by the handwriting model. Please check it.</p>}
-            {p.onReadHandwriting && element.recognizer !== 'handwriting' && element.ocrConfidence < 85 && <ReadHandwriting key={element.id} read={p.onReadHandwriting} />}
+            {/* Offered whatever the confidence: print OCR is often confidently wrong on handwriting. */}
+            {p.onReadHandwriting && element.recognizer !== 'handwriting' && <ReadHandwriting key={element.id} read={p.onReadHandwriting} />}
           </div>
         )}
         {added && <p className="text-[12px] text-tertiary">Drag the box on the page to move it, or use the arrow keys.</p>}

@@ -9,6 +9,8 @@ import type { Point } from '@/core/geometry';
 import { canExportPdf, exportPageImage, exportPdf } from '@/lib/browser/exportDocument';
 import type { DocumentSession, SessionActivity } from '@/lib/session/documentSession';
 import { getOcrLanguage } from '@/core/ocr/languages';
+import { plausibleReading } from '@/core/ocr/handwritingPass';
+
 import type { ReconstructionClient } from '@/lib/workers/reconstructionClient';
 import { AppHeader } from '../AppHeader';
 import { PageStatusView } from '../pages/PageStatusView';
@@ -19,6 +21,9 @@ import { Toolbar, type ViewMode } from '../toolbar/Toolbar';
 import { DocumentView, type CanvasMode } from './DocumentView';
 import { MobileSheet } from './MobileSheet';
 import { useEditor } from './useEditor';
+
+/** Least confidence for a reading the user asked for (the background pass wants 0.25–0.6). */
+const MANUAL_MIN_CONFIDENCE = 0.3;
 
 const CANVAS_PADDING = 48;
 
@@ -154,7 +159,8 @@ export function Editor({ client, session, onClose }: { client: ReconstructionCli
     const el = page?.textElements.find((e) => e.id === elementId);
     if (!page || !el) return false;
     const r = await session.readHandwriting(page.sourceRef, el.bbox);
-    if (!r?.text) return false;
+    // Asked for explicitly, so the bar is lower than the background pass's, but junk (e.g. print in another script) is still refused.
+    if (!r?.text || r.confidence < MANUAL_MIN_CONFIDENCE || !plausibleReading(r.text, el.bbox)) return false;
     ed.run({ type: 'setSourceText', elementId, sourceText: r.text });
     return true;
   };
@@ -264,6 +270,11 @@ export function Editor({ client, session, onClose }: { client: ReconstructionCli
               </Button>
             )}
           </div>
+        )}
+        {canReadHandwriting && !session.autoHandwriting && ed.page.textElements.some((e) => e.ocrConfidence < 60) && (
+          <p role="status" className="shrink-0 bg-brand-light px-4 py-2 text-[12.5px] text-brand-text">
+            Data Saver is on, so handwriting isn&apos;t read automatically. Tap the text, then <span className="font-medium">Read as handwriting</span>.
+          </p>
         )}
         {session.warnings.map((w) => (
           <p key={w} role="status" className="shrink-0 bg-warn-light px-4 py-2 text-[12.5px] text-warn">

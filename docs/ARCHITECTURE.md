@@ -56,7 +56,7 @@ Memory runs out long before CPU does. Measured on phone photos, a 3.7 MP challan
 | Uploaded image kept for editing (larger ones are downscaled, with a notice) | 40 MP | 16 MP | 9 MP |
 | OCR working image (small print upscaled) | 40 MP | 20 MP | 10 MP |
 | Decoded pages kept in the worker (the rest are compressed to PNG) | 600 MB | 250 MB | 100 MB |
-| Handwriting read automatically | yes | yes | only on request, and never with Save-Data |
+| Handwriting read automatically (never with Save-Data) | yes | yes | yes, after the OCR worker is freed |
 
 The same rules apply on every tier:
 - The OSD language-detection worker is freed right after use. It holds its own copy of the upscaled page, ~500 MB on the challan.
