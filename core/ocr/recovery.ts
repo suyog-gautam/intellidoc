@@ -51,7 +51,8 @@ export interface RecoveryOptions {
   maxRegions?: number;
 }
 
-const ALNUM = /[\p{L}\p{N}]/u;
+// Letters, digits and combining marks: Devanagari vowel signs and viramas are marks (\p{M}).
+const ALNUM = /[\p{L}\p{M}\p{N}]/u;
 
 function overlaps(a: Rect, b: Rect): boolean {
   return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
@@ -168,7 +169,7 @@ function toPage(crop: RecoveryCropMeta, w: OcrWord): OcrWord {
  * number of letters/digits a short word must have.
  */
 function credible(w: OcrWord, minShort: number): boolean {
-  const alnum = w.text.replace(/[^\p{L}\p{N}]/gu, '').length;
+  const alnum = w.text.replace(/[^\p{L}\p{M}\p{N}]/gu, '').length;
   if (alnum === 0 || alnum / w.text.length < 0.6) return false;
   if (alnum >= 3) return true;
   return alnum >= minShort && w.confidence >= 85;

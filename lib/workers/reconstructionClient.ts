@@ -2,6 +2,7 @@ import type { Page, PageLayout, TextElement, TypographyEstimate } from '@/core/d
 import type { RecoveryCropMeta } from '@/core/ocr/recovery';
 import type { OcrResult } from '@/core/ocr/types';
 import type { RasterImage } from '@/core/image/raster';
+import type { Rect } from '@/core/geometry';
 import type { WorkerRequest, WorkerResponse } from '@/workers/protocol';
 
 type Pending = { resolve: (r: WorkerResponse) => void; reject: (e: Error) => void };
@@ -45,10 +46,24 @@ export class ReconstructionClient {
   }
 
   /** OCR working copy (illumination-flattened, upscaled for small text) and page skew. */
-  async preprocess(pageKey: string): Promise<{ ocrImage: Blob; skew: number; ocrScale: number }> {
-    const r = await this.call({ type: 'preprocess', pageKey });
+  async preprocess(pageKey: string, findHeadlines = false, ocrPixels?: number): Promise<{ ocrImage: Blob; skew: number; ocrScale: number; headlines?: { words: number; band?: Blob } }> {
+    const r = await this.call({ type: 'preprocess', pageKey, findHeadlines, ocrPixels });
     if (r.type !== 'preprocessed') throw new Error('Unexpected worker response');
-    return { ocrImage: r.ocrImage, skew: r.skew, ocrScale: r.ocrScale };
+    return { ocrImage: r.ocrImage, skew: r.skew, ocrScale: r.ocrScale, headlines: r.headlines };
+  }
+
+  /** Handwritten lines (ink-only crops, prepared for the recogniser) and the OCR fragments each would replace. */
+  async handwritingLines(pageKey: string, elements: TextElement[]): Promise<Array<{ elementIds: string[]; rect: Rect; image: RasterImage }>> {
+    const r = await this.call({ type: 'handwritingLines', pageKey, elements });
+    if (r.type !== 'handwritingLines') throw new Error('Unexpected worker response');
+    return r.lines.map((l) => ({ elementIds: l.elementIds, rect: l.rect, image: { width: l.width, height: l.height, data: new Uint8ClampedArray(l.buffer) } }));
+  }
+
+  /** A prepared handwriting crop of a page area. */
+  async handwritingCrop(pageKey: string, rect: Rect): Promise<RasterImage> {
+    const r = await this.call({ type: 'handwritingCrop', pageKey, rect });
+    if (r.type !== 'handwritingCrop') throw new Error('Unexpected worker response');
+    return { width: r.width, height: r.height, data: new Uint8ClampedArray(r.buffer) };
   }
 
   async recoveryCrops(pageKey: string, ocr: OcrResult): Promise<Array<{ meta: RecoveryCropMeta; image: Blob }>> {
@@ -63,8 +78,8 @@ export class ReconstructionClient {
     return { textElements: r.textElements, layout: r.layout };
   }
 
-  async analyze(pageKey: string, page: Page, element: TextElement): Promise<TypographyEstimate | undefined> {
-    const r = await this.call({ type: 'analyze', pageKey, page, element });
+  async analyze(pageKey: string, page: Page, element: TextElement, languages?: readonly string[]): Promise<TypographyEstimate | undefined> {
+    const r = await this.call({ type: 'analyze', pageKey, page, element, languages: languages && [...languages] });
     if (r.type !== 'analyzed') throw new Error('Unexpected worker response');
     return r.typography;
   }

@@ -1,5 +1,5 @@
 import Tesseract from 'tesseract.js';
-import { OcrError, type OcrEngine, type OcrInput, type OcrProgress, type OcrResult, type OcrWord } from './types';
+import { OcrError, type OcrEngine, type OcrInput, type OcrProgress, type OcrResult, type OcrWord, type ScriptDetection } from './types';
 
 export interface TesseractEngineOptions {
   languages?: string[];
@@ -26,6 +26,7 @@ export interface TesseractEngineOptions {
 export class TesseractEngine implements OcrEngine {
   readonly id = 'tesseract.js';
   private worker: Tesseract.Worker | undefined;
+  private detector: Promise<Tesseract.Worker> | undefined;
   private progressListener: ((p: OcrProgress) => void) | undefined;
 
   constructor(private readonly options: TesseractEngineOptions) {}
@@ -88,10 +89,47 @@ export class TesseractEngine implements OcrEngine {
     }
   }
 
+  /**
+   * Orientation and script detection (OSD). It runs on Tesseract's legacy
+   * engine with the `osd` model, in a separate worker created on first use
+   * (about 9 MB of engine and model, downloaded once, same-origin).
+   */
+  async detectScript(input: OcrInput): Promise<ScriptDetection | undefined> {
+    const { workerPath, corePath, langPath, cachePath } = this.options;
+    this.detector ??= Tesseract.createWorker('osd', Tesseract.OEM.TESSERACT_ONLY, {
+      ...(workerPath ? { workerPath } : {}),
+      ...(corePath ? { corePath } : {}),
+      ...(cachePath ? { cachePath } : {}),
+      langPath,
+      gzip: true,
+      legacyCore: true,
+      legacyLang: true,
+      errorHandler: () => undefined,
+    }).then(async (w) => {
+      // Page images carry no DPI; OSD's blob-size filters assume 70 without it.
+      await w.setParameters({ user_defined_dpi: '300' });
+      return w;
+    });
+    try {
+      const worker = await this.detector;
+      const image = (input.kind === 'blob' ? input.blob : input.bytes) as Tesseract.ImageLike;
+      const { data } = await worker.detect(image);
+      if (!data.script) return undefined;
+      return { script: data.script, confidence: data.script_confidence ?? 0, orientation: data.orientation_degrees ?? 0 };
+    } catch {
+      // Detection only chooses languages; the caller falls back to the browser's language.
+      this.detector = undefined;
+      return undefined;
+    }
+  }
+
   async dispose(): Promise<void> {
     const w = this.worker;
+    const d = this.detector;
     this.worker = undefined;
+    this.detector = undefined;
     if (w) await w.terminate();
+    if (d) await (await d.catch(() => undefined))?.terminate();
   }
 }
 

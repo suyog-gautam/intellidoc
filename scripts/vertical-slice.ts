@@ -20,12 +20,21 @@ import type { IntellidocDocument, Page, TextElement } from '@/core/document/mode
 import { clampRectToBounds, expandRect, orientedBoundingRect } from '@/core/geometry';
 import { createRaster, cropRaster, pasteRaster, type RasterImage } from '@/core/image/raster';
 import { TesseractEngine } from '@/core/ocr/tesseractEngine';
+import { chooseLanguages, HEADLINE_PROBE_LANGUAGES, MIN_HEADLINE_WORDS } from '@/core/ocr/detectLanguages';
+import { cjkRegionsOfLanguages, normalizeLanguages, scriptsOfLanguages } from '@/core/ocr/languages';
+import { findHeadlineWords } from '@/core/vision/headlines';
+import { findHandwritingLines } from '@/core/ocr/handwritingPass';
+import { applyHandwritingReadings } from '@/core/ocr/handwritingReadings';
+import { prepareHandwritingLine } from '@/core/ocr/handwritingLine';
+import { TrocrEngine } from '@/lib/ocr/trocr';
+import * as ort from 'onnxruntime-web';
+import type { FitOptions } from '@/core/typography/fit';
 import { recoverMissedText } from '@/core/ocr/recovery';
 import { scaleOcrResult, type OcrResult } from '@/core/ocr/types';
 import { analyzeElement, clipSlotToNeighbours } from '@/core/pipeline/analyzeElement';
 import { buildDocument } from '@/core/pipeline/buildDocument';
 import { renderPage } from '@/core/rendering/pageRenderer';
-import { estimatePageSkew, estimateTextHeight, grayToRaster, normalizeIllumination, prepareOcrImage } from '@/core/vision/preprocess';
+import { ocrStrip, estimatePageSkew, estimateTextHeight, grayToRaster, normalizeIllumination, prepareOcrImage, type OcrWorkingCopy } from '@/core/vision/preprocess';
 import { createNodeRasterizer, decodeImageFile, encodePng, writePng } from '@/lib/node/nodeRuntime';
 import { openNodePdf } from '@/lib/node/nodePdf';
 
@@ -44,6 +53,13 @@ const EDITS: PlannedEdit[] = [
   { match: /^CALIBRATION LOCATION$/, text: 'TEST LOCATION' },
   { match: /^15-09-2023$/, text: '01-12-2025' },
   { match: /^SCS\/\d{6}\/\d{3}$/, text: 'SCS/190726/042' },
+  // Nepali letter (Devanagari print, Preeti-style font).
+  { match: /^२०८०-०३-०१$/, text: '२०८१-०४-१५' },
+  { match: /^चितवन$/, text: 'काठमाडौं' },
+  { match: /^अजय कु.ार पाण्डेय$/, text: 'अजय कुमार शर्मा' },
+  { match: /Tel\.: 078-580188$/, text: 'Bardghat, Nawalparasi, Tel.: 078-580199' },
+  // Challan (printed red serial number).
+  { match: /^065$/, text: '066' },
 ];
 
 const SELF_CHECK_LIMIT = 25;
@@ -132,7 +148,46 @@ async function loadInputs(file: string): Promise<InputPage[]> {
   ];
 }
 
-async function processImage(input: InputPage, engine: TesseractEngine) {
+/** OCR models live in public/vendor (copied by postinstall), like the app serves them. */
+const LANG_PATH = path.join('public', 'vendor', 'tesseract', 'lang');
+const CACHE_PATH = path.join('.scratch', 'tesseract-cache');
+const engines = new Map<string, TesseractEngine>();
+function engineFor(languages: readonly string[]): TesseractEngine {
+  const key = languages.join('+');
+  let e = engines.get(key);
+  if (!e) engines.set(key, (e = new TesseractEngine({ langPath: LANG_PATH, cachePath: CACHE_PATH, languages: [...languages] })));
+  return e;
+}
+
+/**
+ * Languages as the app chooses them: SLICE_LANGUAGES=nep,eng forces a
+ * choice; otherwise "auto" runs the same detection as the browser (OSD,
+ * headline words + probe, locale from SLICE_LOCALES, e.g. ne-NP).
+ */
+async function detectLanguages(original: RasterImage, working: OcrWorkingCopy, ocrPng: Uint8Array): Promise<string[]> {
+  const { textHeight, scale } = working;
+  const forced = process.env.SLICE_LANGUAGES;
+  if (forced && forced !== 'auto') return normalizeLanguages(forced.split(','));
+  const locales = (process.env.SLICE_LOCALES ?? 'en').split(',');
+  const osd = await engineFor(['eng']).detectScript({ kind: 'bytes', bytes: ocrPng }).catch(() => undefined);
+  const headlines = findHeadlineWords(original, textHeight);
+  let headlineProbeText: string | undefined;
+  if (headlines.words >= MIN_HEADLINE_WORDS && headlines.band) {
+    // Like the app: the band gets the ideal OCR scale, whatever the page's pixel budget allowed.
+    const b = headlines.band;
+    const band = grayToRaster(ocrStrip(working, b.y, b.height));
+    const probe = await engineFor(HEADLINE_PROBE_LANGUAGES).recognize({ kind: 'bytes', bytes: new Uint8Array(encodePng(band)) });
+    headlineProbeText = probe.words.map((w) => w.text).join(' ');
+    console.log(`Headline probe: ${headlineProbeText.slice(0, 120)}`);
+  }
+  const choice = chooseLanguages({ osd, headlineWords: headlines.words, headlineProbeText, locales });
+  console.log(`Language: ${choice.languages.join('+')} via ${choice.source} (OSD ${osd ? `${osd.script} ${osd.confidence.toFixed(1)}` : 'none'}, headline words ${headlines.words}, scale ${scale})`);
+  return choice.languages;
+}
+
+let trocr: TrocrEngine | undefined;
+
+async function processImage(input: InputPage) {
   const { name, original } = input;
   const outDir = path.join('output', name);
   fs.mkdirSync(outDir, { recursive: true });
@@ -140,13 +195,18 @@ async function processImage(input: InputPage, engine: TesseractEngine) {
 
   let t = Date.now();
   const skew = estimatePageSkew(original);
-  const working = prepareOcrImage(original);
+  // SLICE_OCR_PIXELS simulates a device budget (lib/browser/deviceProfile.ts), e.g. 10000000 for low-end phones.
+  const working = prepareOcrImage(original, process.env.SLICE_OCR_PIXELS ? Number(process.env.SLICE_OCR_PIXELS) : undefined);
   const ocrInput = encodePng(grayToRaster(working.image));
   console.log(`\n=== ${name} (${original.width}x${original.height}) skew=${((skew.angle * 180) / Math.PI).toFixed(2)}° text≈${working.textHeight}px ocrScale=${working.scale} prep ${Date.now() - t}ms`);
 
+  const languages = await detectLanguages(original, working, new Uint8Array(ocrInput));
+  const engine = engineFor(languages);
+  const fitContext: FitOptions = { contextScripts: scriptsOfLanguages(languages), cjkRegions: cjkRegionsOfLanguages(languages) };
+
   t = Date.now();
   const pageOcr = scaleOcrResult(
-    await ocrWithCache(engine, new Uint8Array(ocrInput), `${createHash('sha256').update(original.data).digest('hex').slice(0, 16)}-x${working.scale}`),
+    await ocrWithCache(engine, new Uint8Array(ocrInput), `${createHash('sha256').update(original.data).digest('hex').slice(0, 16)}-x${working.scale}-${languages.join('+')}`),
     1 / working.scale,
   );
   const tRec = Date.now();
@@ -161,12 +221,31 @@ async function processImage(input: InputPage, engine: TesseractEngine) {
     { sourceRef: 'page-0', physical: input.physical, width: original.width, height: original.height, skew: skew.angle, ocr, raster: original },
   ]);
   const page0 = (): Page => doc.pages[0];
+  // Handwriting: re-read low-confidence fragments with the on-device handwriting model.
+  const hwDir = path.join('public', 'vendor', 'models', 'trocr-small-handwritten');
+  if (fs.existsSync(path.join(hwDir, 'vocab.json'))) {
+    const th = Date.now();
+    const groups = findHandwritingLines(original, page0().textElements);
+    trocr ??= new TrocrEngine(ort, { bytes: async (f) => new Uint8Array(fs.readFileSync(path.join(hwDir, f))), json: async (f) => JSON.parse(fs.readFileSync(path.join(hwDir, f), 'utf8')) });
+    const readings = [];
+    for (const [i, g] of groups.entries()) {
+      const line = prepareHandwritingLine(g.image);
+      const r = await trocr.recognize(line);
+      readings.push(r);
+      writePng(path.join(outDir, `hw-${i}.png`), line);
+      console.log(`  hw-${i} ${JSON.stringify(r.text)} ${r.confidence.toFixed(2)}`);
+    }
+    const content = applyHandwritingReadings({ textElements: page0().textElements, layout: page0().layout }, groups, readings, skew.angle, page0().id);
+    doc = { ...doc, pages: [{ ...page0(), ...content }] };
+    const read = page0().textElements.filter((e) => e.recognizer === 'handwriting');
+    console.log(`Handwriting: ${groups.length} suspect lines, ${read.length} read in ${Date.now() - th}ms: ${read.map((e) => JSON.stringify(e.sourceText)).join(' ')}`);
+  }
   fs.writeFileSync(path.join(outDir, 'elements.txt'), page0().textElements.map((e) => `${e.id}\t${e.ocrConfidence.toFixed(0)}\t${e.sourceText}`).join('\n'));
   console.log(`Document model: ${page0().textElements.length} text elements on ${page0().layout.lines.length} lines`);
 
   const analyse = (el: TextElement) => {
     const t0 = Date.now();
-    const est = analyzeElement(original, el, rasterizer);
+    const est = analyzeElement(original, el, rasterizer, fitContext);
     if (!est) return { ms: Date.now() - t0, ok: false };
     doc = applyCommand(doc, { type: 'setTypography', elementId: el.id, typography: clipSlotToNeighbours(est, page0(), el) });
     return { ms: Date.now() - t0, ok: true };
@@ -214,16 +293,22 @@ async function processImage(input: InputPage, engine: TesseractEngine) {
   let totalMs = 0;
   for (const el of candidates) {
     const t0 = Date.now();
-    const est = analyzeElement(original, el, rasterizer);
+    const est = analyzeElement(original, el, rasterizer, fitContext);
     totalMs += Date.now() - t0;
     if (!est) continue;
     selfDoc = applyCommand(selfDoc, { type: 'setTypography', elementId: el.id, typography: est });
-    selfDoc = applyCommand(selfDoc, { type: 'setStyleOverrides', elementId: el.id, overrides: {} });
+    // Same style as detected, but set explicitly: forces a full re-render (an edit that keeps the text would keep the scan's pixels).
+    selfDoc = applyCommand(selfDoc, { type: 'setStyleOverrides', elementId: el.id, overrides: { color: est.params.color } });
     scores.push(est.fidelity.score);
   }
   const selfPage = selfDoc.pages[0];
   const selfRender = renderPage(original, { ...selfPage, textElements: selfPage.textElements.filter((e) => candidates.some((c) => c.id === e.id)) }, rasterizer);
   for (const el of candidates) errors.push(meanAbsDiff(original, selfRender.image, el));
+  const worst = candidates.map((el, i) => ({ el, e: errors[i] })).sort((a, b) => b.e - a.e).slice(0, 3);
+  for (const { el, e } of worst) {
+    const ty = selfPage.textElements.find((x) => x.id === el.id)?.typography;
+    console.log(`  worst: |Δ|=${e.toFixed(1)} "${el.sourceText}" font=${ty?.params.fontId}/${ty?.params.weight} size=${ty?.params.fontSize.toFixed(1)} IoU=${ty?.fidelity.silhouetteIoU.toFixed(2)}`);
+  }
   writePng(path.join(outDir, 'self-reconstruction.png'), selfRender.image);
   const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length);
   console.log(
@@ -241,15 +326,11 @@ async function main() {
     console.error('Tip: npm run fixtures builds a synthetic scanned PDF in output/fixtures/.');
     process.exit(1);
   }
-  const engine = new TesseractEngine({
-    langPath: path.join('node_modules', '@tesseract.js-data', 'eng', '4.0.0_best_int'),
-    cachePath: path.join('.scratch', 'tesseract-cache'),
-  });
   const summary = [];
   try {
-    for (const f of files) for (const input of await loadInputs(f)) summary.push(await processImage(input, engine));
+    for (const f of files) for (const input of await loadInputs(f)) summary.push(await processImage(input));
   } finally {
-    await engine.dispose();
+    for (const e of engines.values()) await e.dispose();
   }
   fs.writeFileSync(path.join('output', 'benchmark.json'), JSON.stringify({ at: new Date().toISOString(), summary }, null, 2));
   console.log('\nSummary:', summary);

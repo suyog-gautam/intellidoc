@@ -18,11 +18,15 @@ original file ──► validate ──► PageSource (image | pdf.js) ──►
 | Path | Responsibility | Replaceable by |
 |---|---|---|
 | `core/document` | Model types, pure edit commands, history | – (source of truth) |
-| `core/ocr` | `OcrEngine` interface; `TesseractEngine` adapter | Any browser OCR engine |
+| `core/ocr` | `OcrEngine` interface; `TesseractEngine` adapter (incl. OSD script detection); 40-language catalogue; Auto language choice (`detectLanguages.ts`) | Any browser OCR engine |
+| `core/ocr/handwritingPass.ts` | Finds handwritten lines from the ink (not OCR boxes) and prepares ink-only crops (worker only) | – |
+| `core/ocr/handwritingReadings.ts` | Which handwriting readings are credible and how they replace OCR fragments (`readHandwriting` command); no image code, so the editor bundle stays small | – |
+| `lib/ocr/trocr.ts`, `workers/handwriting.worker.ts` | TrOCR handwriting line recogniser on ONNX Runtime Web (WASM), with digit-constrained second decoding; model vendored same-origin | Any line recogniser (per-script models) |
 | `core/ocr/recovery.ts` | Second OCR pass: re-reads low-confidence words and finds text the page pass missed (e.g. values in table cells) as clean single-line crops; merges only credible improvements | – |
 | `core/layout` | Pixel-measured word styles (tight boxes, stroke weight, ink colour, glyph height); word → line → run grouping; style-aware run splitting; noise filtering; reading order | ML layout model |
 | `core/vision` | Sauvola binarization, components, rule detection, skew, rotated sampling, illumination | OpenCV.js / WASM kernels |
-| `core/typography` | Ink metrics, region analysis, candidate fitting, replacement layout, font catalogue (22 open families incl. metric-compatible stand-ins for Arial, Times, Courier, Calibri, Cambria, Georgia) | ML font matcher |
+| `core/text` | Scripts (17 writing systems), direction, cluster segmentation (Indic conjuncts, Thai marks) | – |
+| `core/typography` | Ink metrics, region analysis, candidate fitting, glyph variants, writer-glyph harvesting, replacement layout, font catalogue (85 open families across 17 scripts incl. metric-compatible stand-ins for Arial, Times, Courier, Calibri, Cambria, Georgia, and 11 handwriting styles) and the generated font manifest (`fontFaces.json`) | ML font matcher |
 | `core/reconstruction` | Push-pull inpainting, noise model, text removal | Patch-based / learned inpainting |
 | `core/rendering` | `TextRasterizer` (canvas), compositor, `renderPage` | WebGL renderer |
 | `core/pipeline` | Orchestration of the above per element/document | – |
@@ -41,7 +45,27 @@ original file ──► validate ──► PageSource (image | pdf.js) ──►
 - **Layouts:** thumbnail rail (lazy JPEG thumbnails from the worker) + canvas + properties panel on `lg`; canvas + panel on `md`; canvas + non-modal bottom sheet on phones.
 - **Start page:** only the start screen code ships up front. The first visit transfers about 245 KB, and repeat visits about 1 KB.
 - **Deferred until needed:** the editor UI, the document session (tesseract.js, pdf.js) and the processing worker load on demand. They're prefetched when the user hovers or focuses the upload card, or drags a file over it.
-- **Candidate fonts:** 22 families, 44 upright faces, about 900 KB. The worker loads them only on the first typography analysis or render. `/vendor/*` is served with long cache lifetimes.
+- **Candidate fonts:** 85 families, cut into ~2,500 file slices by unicode range (one CSS family per slice, listed in `core/typography/fontFaces.json`). The worker loads only the slices of the candidate fonts and characters at hand, e.g. a few of a CJK font's ~100 slices. `/vendor/*` is served with long cache lifetimes. See `docs/MULTILINGUAL_AND_HANDWRITING.md`.
+- **OCR languages:** Auto-detect by default (OSD script detection + headline detection + browser locale), or up to 3 picked on the start screen. Only the needed Tesseract models download.
+- **Static site size:** `public/vendor` is ~245 MB: fonts ~62 MB, OCR models and engines ~96 MB, and the handwriting model plus its runtime ~78 MB. A visitor downloads only what their document needs.
+
+## Memory and low-end devices
+Memory runs out long before CPU does. Measured on phone photos, a 3.7 MP challan whose small print is upscaled 3× for OCR used to peak at ~2.2 GB in the browser. Low-end phones give a tab well under 1 GB. `lib/browser/deviceProfile.ts` sorts devices into three tiers from `navigator.deviceMemory` and core count; browsers that don't report memory count as mid. Each tier gets its own budgets:
+
+| Budget | high (≥ 8 GB) | mid | low (≤ 2 GB or ≤ 2 cores) |
+|---|---|---|---|
+| Uploaded image kept for editing (larger ones are downscaled, with a notice) | 40 MP | 16 MP | 9 MP |
+| OCR working image (small print upscaled) | 40 MP | 20 MP | 10 MP |
+| Decoded pages kept in the worker (the rest are compressed to PNG) | 600 MB | 250 MB | 100 MB |
+| Handwriting read automatically (never with Save-Data) | yes | yes | yes, after the OCR worker is freed |
+
+The same rules apply on every tier:
+- The OSD language-detection worker is freed right after use. It holds its own copy of the upscaled page, ~500 MB on the challan.
+- The headline-probe strip always gets the unconstrained OCR scale, so language detection is the same on every device.
+- On mid and low tiers, the OCR worker is freed once every page is read.
+- The handwriting model runs without ONNX Runtime's memory arena and unloads after 60 s idle.
+
+Handwriting readings arrive line by line, with a "Reading handwriting n/m" status.
 
 ## Rendering layers
 

@@ -33,6 +33,8 @@ export interface EditorState {
   analyzing: ReadonlySet<string>;
   /** Per-element progress so feedback can be shown right on the text. */
   statusOf(id: string): ElementStatus | undefined;
+  /** Style analysis failed for this element's current source text (not retried until it changes). */
+  styleUnavailable(el: TextElement): boolean;
   /** True while any change is still being applied to the preview. */
   updating: boolean;
   overflowing: readonly string[];
@@ -64,7 +66,7 @@ export function styleLabel(style: TextStyle): string {
 /** Commands that change how an element looks, so its preview must be refreshed. */
 function touchedElement(cmd: EditCommand): string | undefined {
   if (cmd.type === 'addElement') return cmd.element.id;
-  if (cmd.type === 'updatePage' || cmd.type === 'setTypography') return undefined;
+  if (cmd.type === 'updatePage' || cmd.type === 'setTypography' || cmd.type === 'readHandwriting') return undefined;
   return cmd.elementId;
 }
 
@@ -82,6 +84,10 @@ export function useEditor(client: ReconstructionClient, session: DocumentSession
   const [copiedStyle, setCopiedStyle] = useState<CopiedStyle>();
   const [pickTargetId, setPickTargetId] = useState<string>();
   const inFlight = useRef(new Map<string, Promise<TypographyEstimate | undefined>>());
+  // Elements whose style analysis failed, with the source text it failed on: not retried until that text is corrected.
+  const [failedAnalysis, setFailedAnalysis] = useState<ReadonlyMap<string, string>>(new Map());
+  const failedRef = useRef(failedAnalysis);
+  failedRef.current = failedAnalysis;
   const renderGeneration = useRef(0);
   const historyRef = useRef(history);
   historyRef.current = history;
@@ -122,13 +128,18 @@ export function useEditor(client: ReconstructionClient, session: DocumentSession
   const ensureAnalyzed = useCallback(
     (el: TextElement, onPage: Page): Promise<TypographyEstimate | undefined> => {
       if (el.typography) return Promise.resolve(el.typography);
+      if (failedRef.current.get(el.id) === el.sourceText) return Promise.resolve(undefined);
       const running = inFlight.current.get(el.id);
       if (running) return running;
       const job = (async () => {
         setAnalyzing((s) => new Set(s).add(el.id));
         try {
-          const typography = await client.analyze(onPage.sourceRef, onPage, el);
-          if (!typography) setError(`Could not analyse the style of “${el.sourceText}”. It will not be re-rendered.`);
+          const typography = await client.analyze(onPage.sourceRef, onPage, el, session.languages);
+          if (!typography) {
+            setFailedAnalysis((m) => new Map(m).set(el.id, el.sourceText));
+            setError(`Could not analyse the style of “${el.sourceText}”. It will not be re-rendered.`);
+            return undefined;
+          }
           setHistory((h) => {
             // Only apply if the source text wasn't corrected meanwhile.
             const current = h.present.pages[onPage.index].textElements.find((e) => e.id === el.id);
@@ -137,6 +148,7 @@ export function useEditor(client: ReconstructionClient, session: DocumentSession
           });
           return typography;
         } catch (e) {
+          setFailedAnalysis((m) => new Map(m).set(el.id, el.sourceText));
           setError(e instanceof Error ? e.message : String(e));
           return undefined;
         } finally {
@@ -151,7 +163,7 @@ export function useEditor(client: ReconstructionClient, session: DocumentSession
       inFlight.current.set(el.id, job);
       return job;
     },
-    [client],
+    [client, session.languages],
   );
 
   // Analyse the selection eagerly, and any modified element missing typography.
@@ -173,7 +185,7 @@ export function useEditor(client: ReconstructionClient, session: DocumentSession
       setDirty((d) => (d.size ? new Set() : d));
       return;
     }
-    const pendingAnalysis = page.textElements.some((e) => elementIsModified(e) && !e.typography);
+    const pendingAnalysis = page.textElements.some((e) => elementIsModified(e) && !e.typography && failedAnalysis.get(e.id) !== e.sourceText);
     const timer = setTimeout(async () => {
       setRendering(true);
       const covered = new Set(page.textElements.map((e) => e.id));
@@ -192,7 +204,7 @@ export function useEditor(client: ReconstructionClient, session: DocumentSession
       }
     }, RENDER_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [client, page, ready]);
+  }, [client, page, ready, failedAnalysis]);
 
   const run = useCallback((cmd: EditCommand) => {
     setError(undefined);
@@ -271,6 +283,8 @@ export function useEditor(client: ReconstructionClient, session: DocumentSession
     [pickTargetId, styleOfElement, run],
   );
 
+  const styleUnavailable = useCallback((el: TextElement) => failedAnalysis.get(el.id) === el.sourceText, [failedAnalysis]);
+
   const statusOf = useCallback(
     (id: string): ElementStatus | undefined => (analyzing.has(id) ? 'analyzing' : dirty.has(id) ? 'rendering' : undefined),
     [analyzing, dirty],
@@ -286,6 +300,7 @@ export function useEditor(client: ReconstructionClient, session: DocumentSession
     rendering,
     analyzing,
     statusOf,
+    styleUnavailable,
     updating: rendering || dirty.size > 0 || analyzing.size > 0,
     overflowing,
     error,

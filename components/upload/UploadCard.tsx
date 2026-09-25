@@ -6,18 +6,21 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import type { OpenProgress } from '@/lib/session/documentSession';
 import { cn } from '@/lib/utils';
+import { LanguagePicker } from './LanguagePicker';
+import { AUTO } from '@/core/ocr/languages';
 
 const STAGE_LABEL: Record<OpenProgress['stage'], string> = {
   validating: 'Checking file',
   decoding: 'Opening file',
   rendering: 'Rendering PDF page',
   preprocessing: 'Preparing page',
+  detecting: 'Detecting the language',
   ocr: 'Recognising text',
   recovery: 'Double-checking unclear text',
   building: 'Building editable document',
 };
 
-const STAGE_ORDER: OpenProgress['stage'][] = ['validating', 'decoding', 'rendering', 'preprocessing', 'ocr', 'recovery', 'building'];
+const STAGE_ORDER: OpenProgress['stage'][] = ['validating', 'decoding', 'rendering', 'preprocessing', 'detecting', 'ocr', 'recovery', 'building'];
 
 /** Overall 0..100 estimate: OCR dominates, so it gets most of the bar. */
 function overallPercent(p: OpenProgress): number {
@@ -26,7 +29,8 @@ function overallPercent(p: OpenProgress): number {
     decoding: [3, 8],
     rendering: [8, 15],
     preprocessing: [15, 22],
-    ocr: [22, 82],
+    detecting: [22, 30],
+    ocr: [30, 82],
     recovery: [82, 95],
     building: [95, 100],
   };
@@ -39,9 +43,12 @@ interface Props {
   onIntent(): void;
   progress?: OpenProgress;
   error?: string;
+  languages: string[];
+  onLanguages(codes: string[]): void;
 }
 
-export function UploadCard({ onFile, onIntent, progress, error }: Props) {
+export function UploadCard({ onFile, onIntent, progress, error, languages, onLanguages }: Props) {
+  const autoLanguage = languages[0] === AUTO;
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
 
@@ -71,7 +78,7 @@ export function UploadCard({ onFile, onIntent, progress, error }: Props) {
           <div className="h-full rounded-full bg-white transition-[width] duration-300" style={{ width: `${pct}%` }} />
         </div>
         <ol className="mt-6 grid gap-1.5 text-[12.5px]">
-          {STAGE_ORDER.filter((s) => s !== 'rendering' || multi || progress.stage === 'rendering').map((s) => {
+          {STAGE_ORDER.filter((s) => (s !== 'rendering' || multi || progress.stage === 'rendering') && (s !== 'detecting' || autoLanguage)).map((s) => {
             const idx = STAGE_ORDER.indexOf(s);
             const cur = STAGE_ORDER.indexOf(progress.stage);
             return (
@@ -138,6 +145,7 @@ export function UploadCard({ onFile, onIntent, progress, error }: Props) {
           }}
         />
       </div>
+      <LanguagePicker value={languages} onChange={onLanguages} />
       {error && (
         <Alert variant="destructive" className="mt-4 border-danger-light bg-danger-light text-danger-text">
           <AlertDescription className="text-danger-text">{error}</AlertDescription>

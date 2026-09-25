@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DocumentSession, OpenProgress } from '@/lib/session/documentSession';
 import type { ReconstructionClient } from '@/lib/workers/reconstructionClient';
 import { StartScreen } from './start/StartScreen';
+import { useOcrLanguages } from './upload/LanguagePicker';
 
 /*
  * Load strategy: the start screen is all the first page load ships. The
@@ -27,6 +28,7 @@ export function IntelliDocApp() {
   const [session, setSession] = useState<DocumentSession>();
   const [progress, setProgress] = useState<OpenProgress>();
   const [error, setError] = useState<string>();
+  const [languages, setLanguages] = useOcrLanguages();
 
   useEffect(() => () => clientRef.current?.dispose(), []);
 
@@ -43,7 +45,7 @@ export function IntelliDocApp() {
       const [{ DocumentSession }, { ReconstructionClient }] = await Promise.all([loadSession(), loadClient(), loadEditor()]);
       // The worker is created on first use, not on page load.
       clientRef.current ??= new ReconstructionClient();
-      setSession(await DocumentSession.open(file, clientRef.current, setProgress));
+      setSession(await DocumentSession.open(file, clientRef.current, setProgress, languages));
     } catch (e) {
       setError(userMessage(e));
       console.error(e);
@@ -61,5 +63,5 @@ export function IntelliDocApp() {
   };
 
   if (session && clientRef.current) return <Editor key={session.initial.id} client={clientRef.current} session={session} onClose={close} />;
-  return <StartScreen onFile={onFile} onIntent={prefetch} progress={progress} error={error} />;
+  return <StartScreen onFile={onFile} onIntent={prefetch} progress={progress} error={error} languages={languages} onLanguages={setLanguages} />;
 }

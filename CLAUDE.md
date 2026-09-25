@@ -7,6 +7,7 @@ Full product brief: `reuirement.txt` (treat as the PRD). Architecture: `docs/ARC
 - `npm run dev` / `npm run build` / `npm start` — Next.js app (Turbopack)
 - `npm test` — Vitest unit + ground-truth tests (Node, uses @napi-rs/canvas)
 - `npm run fixtures` — builds `output/fixtures/scanned-2page.pdf` from the test images
+- `npm run fonts:manifest` — regenerates `core/typography/fontFaces.json` (font files + unicode ranges) after changing the font catalogue; commit the result
 - `npm run build:pages` — static export for GitHub Pages (deployed by `.github/workflows/deploy-pages.yml` on push to main; base path from `NEXT_PUBLIC_BASE_PATH`). All asset URLs must go through `vendorUrl()` in `lib/browser/paths.ts`.
 - `npm run slice [-- file.pdf|file.jpg]` — vertical-slice benchmark on the git-ignored `test files/*` (never commit real documents) (images and PDFs, every page); writes `output/<name>/` (compare-*.png, edited.png, self-reconstruction.png) and `output/benchmark.json`. Run it before/after any change to vision/typography/reconstruction and compare the self-reconstruction error.
 - `npm run typecheck`

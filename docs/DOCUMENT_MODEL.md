@@ -11,6 +11,7 @@ Defined in `core/document/model.ts`. Serializable (plain JSON) so it can be stor
   - Geometry: `bbox` (axis-aligned) and `box` (oriented).
   - Also: `words`, `ocrConfidence`, `readingOrder`, `lineId`, `alignment` (+ `alignmentLocked` once the user chooses), `styleOverrides`, and `typography`.
 - `TypographyEstimate`: upright analysis `frame`, `textBox`, `slot`, `inferredAlignment`, fitted `RenderParams`, ranked font `candidates`, `measured` pixel statistics, `fidelity` metrics, `confidence` and `analyzerVersion`.
+- `RenderParams` may carry `glyphFonts` (per-character glyph variants matched to the scan, e.g. a footless `1`) and `jitter` (natural variation for handwriting, 0–1). Both are optional, so older models stay valid. See `docs/MULTILINGUAL_AND_HANDWRITING.md`.
 
 ## Style and user text
 - `TextElement.origin` is `'ocr'` (recognised, the default) or `'added'` (a user text box). Added boxes are never "removed" from the scan; they are rendered on top, in a style copied from a recognised element (`core/document/addedText.ts`).

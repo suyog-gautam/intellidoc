@@ -24,6 +24,15 @@ Weight classes are learned per page: stroke is normalised by body-text height, t
 3. **Refinement.** The top 3 candidates go through coordinate descent over origin, baseline, size, scaleX, letter spacing, emboldening, blur and slant, with step halving.
 4. **Reported metrics.** Photometric error, silhouette IoU, width/height/stroke ratios, and a combined score and confidence.
 
+## Cap-height measurement
+`measureInk` takes the cap line from glyphs at least 0.85× the reference height (it was 0.75). With 0.75, the x-height letters of large-x-height fonts such as Arial or Verdana (0.72–0.78 of cap height once blurred) counted as capitals. The size came out about 25% too small, and lines like "Invoice 23465" fitted Montserrat. Synthetic benchmark (22 Latin fonts × 5 invoice-style texts, 24–40 px): top-1 font 87.3% → 97.3%, mean fidelity 0.854 → 0.883, size error 4.07% → 3.28%. Remaining misses: Open Sans ↔ Noto Sans (near-identical designs, 2 cases), and Caladea → Open Sans on "Customer name", which has a single capital.
+
+## Glyph variants and handwriting (`glyphVariants.ts`)
+After the fit, variant-prone characters (digits, `agltyIJQGR`) are compared one by one against structurally different designs from other candidate fonts. The comparison uses only that character's pixels, after a local alignment. The standard case is Arimo's footed `1`, which Arial does not have. Handwriting fonts get natural variation measured from the baseline wobble. Details and measurements: `docs/MULTILINGUAL_AND_HANDWRITING.md`.
+
+## Minimal edits (`partialEdit.ts`)
+Unchanged prefix/suffix characters keep the scan's pixels; only the changed middle is erased and rendered (never cutting inside a joined word). See `docs/MULTILINGUAL_AND_HANDWRITING.md`.
+
 ## Replacement layout (`layoutReplacement.ts`)
 The replacement keeps the anchor (left, centre or right). If it doesn't fit the slot, the least visible adjustment is tried first: tracking (up to −3% em), then width (up to −12%), then size (up to −20%). Shorter text is never stretched.
 

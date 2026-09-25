@@ -38,7 +38,18 @@ export interface OcrEngine {
    * Used to re-read words the page pass got wrong or missed entirely.
    */
   recognizeLine(input: OcrInput): Promise<OcrResult>;
+  /** Dominant script of a page (orientation and script detection), when the engine supports it. */
+  detectScript?(input: OcrInput): Promise<ScriptDetection | undefined>;
   dispose(): Promise<void>;
+}
+
+export interface ScriptDetection {
+  /** Engine script name, e.g. "Latin", "Devanagari", "Han", "Japanese", "Arabic". */
+  script: string;
+  /** Engine-specific confidence (Tesseract OSD: roughly 0–30; above ~1.5 is dependable). */
+  confidence: number;
+  /** Clockwise page rotation the text appears to have, degrees. */
+  orientation: number;
 }
 
 export class OcrError extends Error {

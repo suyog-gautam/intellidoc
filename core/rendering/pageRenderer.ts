@@ -4,6 +4,7 @@ import { removeElementText } from '../reconstruction/textRemoval';
 import { layoutReplacement } from '../typography/layoutReplacement';
 import { hashString } from '../utils/random';
 import { compositeText } from './textCompositor';
+import { planEdit, type EditPlan } from './partialEdit';
 import type { TextRasterizer } from './textRasterizer';
 
 export interface PageRenderResult {
@@ -37,12 +38,19 @@ export function renderPage(original: RasterImage, page: Page, rasterizer: TextRa
     }
     active.push(el);
   }
-  for (const el of active) if (el.origin !== 'added') removeElementText(image, original, el.typography!, hashString(el.id));
+  // Unchanged characters keep their original pixels: only the changed part is erased and drawn.
+  const plans = new Map<string, EditPlan>();
   for (const el of active) {
     if (el.state === 'deleted') continue;
     const layout = layoutReplacement(el.typography!, el.sourceText, el.text, el.alignment, rasterizer, el.styleOverrides);
     if (layout.overflow) overflowing.push(el.id);
-    compositeText(image, el.typography!, layout.params, el.text, layout.advance, rasterizer, hashString(`${el.id}:${el.text}`));
+    plans.set(el.id, planEdit(el, layout, rasterizer));
+  }
+  for (const el of active) if (el.origin !== 'added') removeElementText(image, original, el.typography!, hashString(el.id), plans.get(el.id)?.erase);
+  for (const el of active) {
+    const plan = plans.get(el.id);
+    if (!plan || !plan.text) continue;
+    compositeText(image, el.typography!, plan.params, plan.text, plan.advance, rasterizer, hashString(`${el.id}:${el.text}`), hashString(el.id));
   }
   return { image, pending, overflowing };
 }

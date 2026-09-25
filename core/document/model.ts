@@ -102,6 +102,8 @@ export interface TextElement {
   state: EditState;
   /** 'ocr' = recognised in the scan (default); 'added' = a new text box placed by the user. */
   origin?: 'ocr' | 'added';
+  /** Set when the text was read by the handwriting recogniser (not Tesseract): the UI asks the user to check it. */
+  recognizer?: 'handwriting';
   /** Element whose style was applied (copy/paste or "match style"), for the UI. */
   styleSourceId?: Id;
   alignment: TextAlignment;
@@ -115,7 +117,7 @@ export interface TextElement {
   styleOverrides?: Partial<RenderParams>;
 }
 
-export type FontCategory = 'sans' | 'serif' | 'mono' | 'condensed';
+export type FontCategory = 'sans' | 'serif' | 'mono' | 'condensed' | 'handwriting';
 
 /**
  * Parameters that fully determine how text is rasterised. Coordinates are in
@@ -147,6 +149,43 @@ export interface RenderParams {
   color: [number, number, number];
   /** 0..1 multiplier on coverage. */
   opacity: number;
+  /**
+   * Glyph variants: character (cluster) → candidate font that draws it,
+   * scaled to this font's size of that character and centred in its advance
+   * (layout is unchanged). Fonts disagree on details such as a foot under
+   * "1" or a two-storey "g"; the fitter picks, per character, the variant
+   * the scan shows. A value equal to `fontId` means "the font's own glyph".
+   */
+  glyphFonts?: Record<string, string>;
+  /**
+   * Natural variation 0..1 for handwriting: a smooth deformation field
+   * (baseline drift, local slant, size and shape changes, pen pressure),
+   * so no two instances of a character look alike and replacements don't
+   * look typeset. 0 or absent for print.
+   */
+  jitter?: number;
+  /**
+   * The writer's own characters, cut from the scan (handwriting only):
+   * character → several real instances. Replacement text draws a character
+   * from these when available, choosing a different instance each time, and
+   * falls back to the font for characters the writer hasn't written yet.
+   */
+  glyphSamples?: Record<string, GlyphSample[]>;
+}
+
+/** One handwritten character instance harvested from the scan. */
+export interface GlyphSample {
+  /** Bitmap size, px (at `fontSize`). */
+  w: number;
+  h: number;
+  /** Ink coverage 0..255, row-major, base64. */
+  alpha: string;
+  /** Bitmap top-left relative to the pen position and the baseline, px (at `fontSize`). */
+  dx: number;
+  dy: number;
+  /** Font size and horizontal scale of the fit it was harvested with; rendering scales from these. */
+  fontSize: number;
+  scaleX: number;
 }
 
 export interface FidelityMetrics {

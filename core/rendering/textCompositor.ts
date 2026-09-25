@@ -18,6 +18,8 @@ export function compositeText(
   advance: number,
   rasterizer: TextRasterizer,
   seed: number,
+  /** Stable per element (not per text), so handwriting variation stays put while the text is edited. */
+  variationSeed = seed,
 ): void {
   if (!text.trim()) return;
   const h = est.measured.inkHeight;
@@ -26,12 +28,14 @@ export function compositeText(
   const x1 = Math.ceil(Math.max(frame.width, params.originX + advance + 2 * h));
   // Also grow vertically: a user-chosen (or pasted) larger size must not be
   // clipped by the frame, which was sized for the original text.
-  const y0 = Math.floor(Math.min(0, params.baselineY - params.fontSize * 1.15 - 2 * params.blur - params.embolden));
-  const y1 = Math.ceil(Math.max(frame.height, params.baselineY + params.fontSize * 0.45 + 2 * params.blur + params.embolden));
+  // Tall scripts need the headroom: Nastaliq climbs ~2 em, stacked Thai/Indic marks reach beyond 1 em.
+  const y0 = Math.floor(Math.min(0, params.baselineY - params.fontSize * 2.3 - 2 * params.blur - params.embolden));
+  const y1 = Math.ceil(Math.max(frame.height, params.baselineY + params.fontSize * 1.0 + 2 * params.blur + params.embolden));
   const rect = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
   const renderFrame = subFrame(frame, rect);
   const local: RenderParams = { ...params, originX: params.originX - rect.x, baselineY: params.baselineY - rect.y };
-  const coverage = renderCoverage(rasterizer, text, local, rect.width, rect.height);
+  // The variation field is anchored to the frame, not to this render rectangle (which grows with the text).
+  const coverage = renderCoverage(rasterizer, text, local, rect.width, rect.height, { seed: variationSeed, x: rect.x, y: rect.y });
 
   const rand = mulberry32(seed);
   const grain = est.measured.noiseSigma * 0.8;

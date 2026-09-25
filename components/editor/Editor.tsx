@@ -7,7 +7,10 @@ import { Button } from '@/components/ui/button';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import type { Point } from '@/core/geometry';
 import { canExportPdf, exportPageImage, exportPdf } from '@/lib/browser/exportDocument';
-import type { DocumentSession } from '@/lib/session/documentSession';
+import type { DocumentSession, SessionActivity } from '@/lib/session/documentSession';
+import { getOcrLanguage } from '@/core/ocr/languages';
+import { plausibleReading } from '@/core/ocr/handwritingReadings';
+
 import type { ReconstructionClient } from '@/lib/workers/reconstructionClient';
 import { AppHeader } from '../AppHeader';
 import { PageStatusView } from '../pages/PageStatusView';
@@ -18,6 +21,9 @@ import { Toolbar, type ViewMode } from '../toolbar/Toolbar';
 import { DocumentView, type CanvasMode } from './DocumentView';
 import { MobileSheet } from './MobileSheet';
 import { useEditor } from './useEditor';
+
+/** Least confidence for a reading the user asked for (the background pass wants 0.25–0.6). */
+const MANUAL_MIN_CONFIDENCE = 0.3;
 
 const CANVAS_PADDING = 48;
 
@@ -42,6 +48,16 @@ export function Editor({ client, session, onClose }: { client: ReconstructionCli
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const doc = ed.history.present;
+  const [canReadHandwriting, setCanReadHandwriting] = useState(false);
+  const [activity, setActivity] = useState<SessionActivity>({});
+  useEffect(() => session.subscribeActivity(setActivity), [session]);
+  useEffect(() => {
+    let live = true;
+    void session.canReadHandwriting().then((ok) => live && setCanReadHandwriting(ok));
+    return () => {
+      live = false;
+    };
+  }, [session]);
   const output = ed.rendered ?? ed.original;
   const selected = ed.page.textElements.find((e) => e.id === ed.selectedId);
   const pagesDone = doc.pages.filter((p) => p.status === 'ready' || p.status === 'failed').length;
@@ -134,11 +150,25 @@ export function Editor({ client, session, onClose }: { client: ReconstructionCli
 
   const onMove = (id: string, dx: number, dy: number) => ed.run({ type: 'moveElement', elementId: id, dx, dy });
 
-  const status = ed.updating ? 'Updating…' : pagesDone < doc.pages.length ? `Reading pages ${pagesDone}/${doc.pages.length}` : undefined;
+  const hw = activity.handwriting;
+  const background = pagesDone < doc.pages.length ? `Reading pages ${pagesDone}/${doc.pages.length}` : hw ? `Reading handwriting ${hw.done + 1}/${hw.total}` : undefined;
+  const status = ed.updating ? 'Updating…' : background;
+
+  const readHandwriting = async (elementId: string) => {
+    const page = doc.pages.find((p) => p.textElements.some((e) => e.id === elementId));
+    const el = page?.textElements.find((e) => e.id === elementId);
+    if (!page || !el) return false;
+    const r = await session.readHandwriting(page.sourceRef, el.bbox);
+    // Asked for explicitly, so the bar is lower than the background pass's, but junk (e.g. print in another script) is still refused.
+    if (!r?.text || r.confidence < MANUAL_MIN_CONFIDENCE || !plausibleReading(r.text, el.bbox)) return false;
+    ed.run({ type: 'setSourceText', elementId, sourceText: r.text });
+    return true;
+  };
 
   const panelProps = (el: typeof selected) => ({
     element: el,
     status: el ? ed.statusOf(el.id) : undefined,
+    styleUnavailable: !!el && ed.styleUnavailable(el),
     overflowing: !!el && ed.overflowing.includes(el.id),
     run: ed.run,
     copiedStyle: ed.copiedStyle,
@@ -147,6 +177,7 @@ export function Editor({ client, session, onClose }: { client: ReconstructionCli
     onPickStyle: () => (el && !picking ? ed.startPick(el.id) : ed.cancelPick()),
     picking,
     styleSourceText: styleSource?.text,
+    onReadHandwriting: canReadHandwriting && el ? () => readHandwriting(el.id) : undefined,
   });
 
   const viewProps = {
@@ -181,6 +212,7 @@ export function Editor({ client, session, onClose }: { client: ReconstructionCli
           <span className="hidden min-w-0 truncate text-[13px] text-muted-foreground md:block" title={doc.source.fileName}>
             {doc.source.fileName}
           </span>
+          <LanguageBadge languages={session.languages} detected={session.detection !== undefined} />
           <Button variant="ghost" className="h-9 rounded-lg" onClick={onClose} aria-label="New document">
             <FilePlus2 />
             <span className="hidden sm:inline">New</span>
@@ -239,6 +271,11 @@ export function Editor({ client, session, onClose }: { client: ReconstructionCli
             )}
           </div>
         )}
+        {canReadHandwriting && !session.autoHandwriting && ed.page.textElements.some((e) => e.ocrConfidence < 60) && (
+          <p role="status" className="shrink-0 bg-brand-light px-4 py-2 text-[12.5px] text-brand-text">
+            Data Saver is on, so handwriting isn&apos;t read automatically. Tap the text, then <span className="font-medium">Read as handwriting</span>.
+          </p>
+        )}
         {session.warnings.map((w) => (
           <p key={w} role="status" className="shrink-0 bg-warn-light px-4 py-2 text-[12.5px] text-warn">
             {w}
@@ -288,6 +325,17 @@ export function Editor({ client, session, onClose }: { client: ReconstructionCli
                 {ed.analyzing.size > 0 ? 'Matching the original style…' : 'Updating preview…'}
               </div>
             )}
+            {/* Phones have no toolbar status: say quietly why text may still change. */}
+            {!ed.updating && background && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="pointer-events-none absolute top-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full bg-surface px-3 py-1.5 text-[12px] font-medium whitespace-nowrap text-muted-foreground shadow-md md:hidden"
+              >
+                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                {background}
+              </div>
+            )}
           </div>
           <aside aria-label="Properties" className="hidden w-[300px] shrink-0 overflow-y-auto border-l border-border bg-surface md:block xl:w-[340px]">
             <PropertiesPanel {...panelProps(selected)} />
@@ -299,5 +347,16 @@ export function Editor({ client, session, onClose }: { client: ReconstructionCli
         </MobileSheet>
       </div>
     </TooltipProvider>
+  );
+}
+
+/** The document's OCR languages; "detected" when Auto chose them. To change them, open the file again with other languages. */
+function LanguageBadge({ languages, detected }: { languages: readonly string[]; detected: boolean }) {
+  const names = languages.map((c) => getOcrLanguage(c)?.nativeName ?? c);
+  const label = `${detected ? 'Detected' : 'Language'}: ${names.join(' + ')}`;
+  return (
+    <span className="hidden shrink-0 rounded-full bg-canvas px-2.5 py-1 text-[12px] text-muted-foreground lg:inline" title={`${label}. To read it in other languages, open the file again and pick them.`}>
+      {label}
+    </span>
   );
 }

@@ -10,17 +10,39 @@ import { renderPage } from '@/core/rendering/pageRenderer';
 import { CanvasTextRasterizer, type CanvasLike } from '@/core/rendering/textRasterizer';
 import { pageContentFromOcr } from '@/core/pipeline/buildDocument';
 import { cropForLineOcr, findRecoveryRegions } from '@/core/ocr/recovery';
-import { estimatePageSkew, estimateTextHeight, grayToRaster, normalizeIllumination, prepareOcrImage } from '@/core/vision/preprocess';
-import { loadCandidateFonts } from '@/lib/browser/fonts';
+import { ocrStrip, estimatePageSkew, estimateTextHeight, grayToRaster, normalizeIllumination, prepareOcrImage } from '@/core/vision/preprocess';
+import { findHeadlineWords } from '@/core/vision/headlines';
+import { findHandwritingLines } from '@/core/ocr/handwritingPass';
+import { prepareHandwritingLine } from '@/core/ocr/handwritingLine';
+import { cropRaster } from '@/core/image/raster';
+import { deviceBudgets } from '@/lib/browser/deviceProfile';
+import { cjkRegionsOfLanguages, scriptsOfLanguages } from '@/core/ocr/languages';
+import type { Page } from '@/core/document/model';
+import { elementIsModified } from '@/core/document/model';
+import { candidateFonts } from '@/core/typography/fontFaces';
+import { loadFontsFor } from '@/lib/browser/fonts';
 import { PageStore } from './pageStore';
 import type { WorkerRequest, WorkerResponse } from './protocol';
 
 declare const self: DedicatedWorkerGlobalScope & { fonts: FontFaceSet };
 
-// Candidate fonts (~300 KB) are only needed once text is analysed or
-// rendered, not for OCR, so load them on first use.
-let fontsPromise: Promise<void> | undefined;
-const fontsReady = () => (fontsPromise ??= loadCandidateFonts(self.fonts));
+// Fonts are only needed once text is analysed or rendered, not for OCR, and
+// then only the slices of the fonts and characters at hand (a page of
+// Chinese loads a few of Noto Sans SC's ~100 slices).
+/** "HXE": capital height reference used when the user switches fonts (styleTransfer.capHeight). */
+const REFERENCE = 'HXE';
+
+/** Fonts each modified element renders with (detected, chosen, glyph-variant donors) and their texts. */
+function pageFontsReady(page: Page): Promise<unknown> {
+  const loads: Promise<void>[] = [];
+  for (const el of page.textElements) {
+    if (!elementIsModified(el) || !el.typography) continue;
+    const p = { ...el.typography.params, ...el.styleOverrides };
+    const ids = new Set([el.typography.params.fontId, p.fontId, ...Object.values(p.glyphFonts ?? {})]);
+    loads.push(loadFontsFor(self.fonts, ids, [el.text, el.sourceText, REFERENCE]));
+  }
+  return Promise.all(loads);
+}
 const rasterizer = new CanvasTextRasterizer((w, h) => {
   const canvas = new OffscreenCanvas(w, h);
   return {
@@ -40,18 +62,22 @@ async function encode(img: RasterImage, type: string, quality?: number): Promise
   return canvas.convertToBlob({ type, quality });
 }
 
-const store = new PageStore({
-  encode: (img) => encode(img, 'image/png'),
-  async decode(blob) {
-    const bitmap = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
-    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-    const ctx = canvas.getContext('2d')!;
-    ctx.drawImage(bitmap, 0, 0);
-    bitmap.close();
-    const d = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    return { width: d.width, height: d.height, data: d.data };
+const store = new PageStore(
+  {
+    encode: (img) => encode(img, 'image/png'),
+    async decode(blob) {
+      const bitmap = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(bitmap, 0, 0);
+      bitmap.close();
+      const d = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      return { width: d.width, height: d.height, data: d.data };
+    },
   },
-});
+  // Decoded pages kept in memory, per device (older pages are compressed to PNG).
+  deviceBudgets().pageCacheBytes,
+);
 
 function post(msg: WorkerResponse, transfer: Transferable[] = []) {
   self.postMessage(msg, transfer);
@@ -71,9 +97,16 @@ async function handle(req: WorkerRequest): Promise<void> {
     case 'preprocess': {
       const page = await store.get(req.pageKey);
       const skew = estimatePageSkew(page);
-      const working = prepareOcrImage(page);
+      const working = prepareOcrImage(page, req.ocrPixels);
+      let headlines: { words: number; band?: Blob } | undefined;
+      if (req.findHeadlines) {
+        const found = findHeadlineWords(page, working.textHeight);
+        // The probe strip is small, so it always gets the ideal OCR scale even when the page had to be scaled less.
+        const band = found.band && ocrStrip(working, found.band.y, found.band.height);
+        headlines = { words: found.words, band: band && band.height > 0 ? await encode(grayToRaster(band), 'image/png') : undefined };
+      }
       const ocrImage = await encode(grayToRaster(working.image), 'image/png');
-      post({ type: 'preprocessed', id: req.id, ocrImage, skew: skew.angle, ocrScale: working.scale });
+      post({ type: 'preprocessed', id: req.id, ocrImage, skew: skew.angle, ocrScale: working.scale, headlines });
       return;
     }
     case 'recoveryCrops': {
@@ -95,13 +128,18 @@ async function handle(req: WorkerRequest): Promise<void> {
       return;
     }
     case 'analyze': {
-      await fontsReady();
-      const est = analyzeElement(await store.get(req.pageKey), req.element, rasterizer);
+      const languages = req.languages ?? [];
+      const contextScripts = scriptsOfLanguages(languages);
+      const cjkRegions = cjkRegionsOfLanguages(languages);
+      // Candidates for numbers in, say, a Nepali document include Devanagari families.
+      const candidates = candidateFonts(req.element.sourceText.trim(), { scripts: contextScripts, cjkRegions }).map((f) => f.id);
+      await loadFontsFor(self.fonts, candidates, [req.element.sourceText, req.element.text, REFERENCE]);
+      const est = analyzeElement(await store.get(req.pageKey), req.element, rasterizer, { contextScripts, cjkRegions });
       post({ type: 'analyzed', id: req.id, typography: est && clipSlotToNeighbours(est, req.page, req.element) });
       return;
     }
     case 'render': {
-      await fontsReady();
+      await pageFontsReady(req.page);
       const result = renderPage(await store.get(req.pageKey), req.page, rasterizer);
       postRaster(req.id, result.image, result.pending, result.overflowing);
       return;
@@ -119,12 +157,27 @@ async function handle(req: WorkerRequest): Promise<void> {
       post({ type: 'encoded', id: req.id, blob: await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 }) });
       return;
     }
+    case 'handwritingLines': {
+      const lines = findHandwritingLines(await store.get(req.pageKey), req.elements);
+      const out = lines.map((l) => {
+        const img = prepareHandwritingLine(l.image);
+        return { elementIds: l.elementIds, rect: l.rect, width: img.width, height: img.height, buffer: img.data.buffer as ArrayBuffer };
+      });
+      post({ type: 'handwritingLines', id: req.id, lines: out }, out.map((l) => l.buffer));
+      return;
+    }
+    case 'handwritingCrop': {
+      const img = prepareHandwritingLine(cropRaster(await store.get(req.pageKey), req.rect));
+      const buffer = img.data.buffer as ArrayBuffer;
+      post({ type: 'handwritingCrop', id: req.id, width: img.width, height: img.height, buffer }, [buffer]);
+      return;
+    }
     case 'getOriginal':
       // A copy: the stored original must stay intact for later reconstruction.
       postRaster(req.id, cloneRaster(await store.get(req.pageKey)));
       return;
     case 'encodePage': {
-      await fontsReady();
+      await pageFontsReady(req.page);
       const result = renderPage(await store.get(req.pageKey), req.page, rasterizer);
       post({ type: 'encoded', id: req.id, blob: await encode(result.image, req.mimeType, req.quality) });
       return;

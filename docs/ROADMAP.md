@@ -19,7 +19,9 @@
 - **Emboldening is used instead of the real weight** in some fits. It looks close, but it's a stand-in.
 - **Analysis is lazy (~1–3 s per element in the worker).** It runs only for selected or edited elements.
 - **Main-thread pauses up to ~330 ms happen during upload** (decode/copy). The plan is to move decoding into the worker.
-- **The candidate fonts are Latin only.**
+- **Scripts not yet covered:** Odia, Sinhala, Myanmar, Khmer, Ethiopic, Georgian, Armenian (need OCR models + fonts in the catalogue). 17 writing systems are supported.
+- **Vertical CJK text** (top-to-bottom columns) is not supported; horizontal CJK is.
+- **Handwriting OCR is English-only** (TrOCR, on-device). Handwriting in other scripts relies on Tesseract; correct it in "Original says". Cursive words are read less reliably than numbers. See `docs/MULTILINGUAL_AND_HANDWRITING.md`.
 - **PDF export re-encodes each page as JPEG (quality 0.95).** This is visually lossless but not byte-identical, and a PDF's own text layer is not kept.
 - **Pages rotated by 90°** (scanned sideways without a /Rotate entry) are not auto-oriented yet.
 - **Very low-DPI scans (~90 DPI, 9 px text) render replacement text slightly softer than the crisp printed original.** Average darkness matches (measured: 226 vs 227 mean luminance), but the pixel-difference objective prefers soft, sub-pixel-spread glyphs over crisp stems. A coverage-contrast parameter was tried and not selected by the optimizer. Next step: an edge/structure-aware objective, or hinted rendering for small sizes.
@@ -36,10 +38,20 @@
 
 ## Editing tools ✅
 - Light-on-dark text (white headings on coloured banners) detected and reconstructed with the correct polarity
-- Per-element style controls: font (Auto = detected, or any of 22 bundled fonts), weight, size, ink colour; "Reset to detected"
+- Per-element style controls: font (Auto = detected, or any of 36 bundled fonts), weight, size, ink colour; "Reset to detected"
 - Add text boxes anywhere; style defaults to the nearest recognised text; drag or arrow-key to move
 - Copy/Paste style (across pages) and "Match style" eyedropper
 - In-context progress: tags on the text itself, a panel status line, and a floating "Updating preview…" pill
+
+## Languages, glyph variants, handwriting ✅
+- OCR in 40 languages covering the most spoken ones; Auto-detect (OSD + headline detection + locale) by default
+- 17 writing systems incl. Arabic/Urdu/Persian (RTL, Nastaliq), Hebrew, Chinese, Japanese, Korean, Thai and the major Indic scripts; 85 font families loaded per character range
+- Handwriting: the writer's own glyphs reused (varied instances), research-based per-instance variation, handwriting fonts for 7 scripts
+- Devanagari rendering: 11 candidate families, cluster-based placement (conjuncts), no tracking across the headline, headline kept out of rule detection so it's removed with the text
+- Per-script font subsets loaded on demand; same-style fallbacks for scripts a family lacks
+- Glyph variants matched per character from the scan (e.g. Arial's footless `1` instead of Arimo's footed one)
+- Handwriting candidate fonts and measured natural variation
+- Handwriting reading: on-device TrOCR in the background for Latin-script documents, plus "Read as handwriting" per element
 
 ## Phase 2: fidelity
 - Per-document font prior; more families (Liberation, DejaVu, Noto, Georgia-like, Verdana-like); per-glyph alignment
@@ -53,4 +65,4 @@
 - Tables, forms, add-new-text, move/resize elements, difference view
 
 ## Phase 4
-- Alternative OCR engines, ML layout, ML font matching, multilingual scripts (Devanagari, Arabic, CJK…)
+- Handwriting recognisers for more scripts (Devanagari etc.) as open models appear, ML layout, ML font matching, more scripts (Bengali, Arabic, CJK…)

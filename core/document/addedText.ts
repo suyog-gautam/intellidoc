@@ -1,4 +1,5 @@
 import type { OrientedBox, Point } from '../geometry';
+import { clusters } from '../text/script';
 import { orientedBoundingRect } from '../geometry';
 import type { Id, RenderParams, TextElement, TypographyEstimate } from './model';
 
@@ -66,7 +67,7 @@ export function createAddedElement(o: AddTextOptions): TextElement {
 export function addedTextBox(frame: OrientedBox, est: TypographyEstimate, text: string, overrides?: Partial<RenderParams>): OrientedBox {
   const p = { ...est.params, ...overrides };
   const h = Math.max(est.measured.inkHeight, p.fontSize * 0.72) * 1.35;
-  const w = Math.max(h * 1.5, Array.from(text).length * p.fontSize * 0.55 * p.scaleX + p.letterSpacing * text.length);
+  const w = Math.max(h * 1.5, clusters(text).length * p.fontSize * 0.55 * p.scaleX + p.letterSpacing * text.length);
   // Box from the pen origin rightwards, centred on the cap-height band.
   const lx = est.params.originX + w / 2 - frame.width / 2;
   const ly = est.params.baselineY - h * 0.4 - frame.height / 2;

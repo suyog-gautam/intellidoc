@@ -53,6 +53,18 @@ describe('typography fitting (ground truth)', () => {
     });
   }
 
+  it('identifies the font of a mixed-case invoice line (x-height letters are not capitals)', () => {
+    // Before the cap-height fix, 12 of 22 fonts fitted Montserrat on this line.
+    for (const fontId of ['arimo', 'roboto', 'inter']) {
+      const page = syntheticPaper(700, 160, 11);
+      const text = 'Invoice 23465';
+      const box = drawText(page, rasterizer, text, { cx: 350, cy: 80, width: 660, height: 120, angle: 0 }, defaultParams({ fontId, fontSize: 24, originX: 30, baselineY: 75 }));
+      const est = analyzeElement(page, element(text, box), rasterizer)!;
+      expect(est.params.fontId).toBe(fontId);
+      expect(Math.abs(est.params.fontSize - 24) / 24).toBeLessThan(0.08);
+    }
+  });
+
   it('re-renders its own text nearly identically (self-reconstruction)', () => {
     const page = syntheticPaper(700, 200, 3);
     const text = 'Satisfactory';

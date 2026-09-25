@@ -1,5 +1,6 @@
 import type { RenderParams, TextAlignment, TypographyEstimate } from '../document/model';
 import type { TextRasterizer } from '../rendering/textRasterizer';
+import { clusters, hasConnectedScript } from '../text/script';
 import { resolveParams } from './styleTransfer';
 
 export interface ReplacementLayout {
@@ -17,8 +18,9 @@ export interface ReplacementLayout {
  * centre or right edge) and fits the available space.
  *
  * Longer text is fitted gradually, preferring the least visible change:
- * slightly tighter tracking, then a little horizontal compression, then a
- * smaller size. Shorter text is never stretched.
+ * slightly tighter tracking (not for Devanagari, whose headline would
+ * break), then a little horizontal compression, then a smaller size.
+ * Shorter text is never stretched.
  */
 export function layoutReplacement(
   estimate: TypographyEstimate,
@@ -48,9 +50,10 @@ export function layoutReplacement(
   const params = { ...base };
   const adjustments: ReplacementLayout['adjustments'] = [];
   let advance = rasterizer.measure(newText, params);
-  const glyphs = Math.max(1, Array.from(newText).length - 1);
+  const glyphs = Math.max(1, clusters(newText).length - 1);
 
-  if (advance > available) {
+  // Scripts joined by a headline can't be tracked tighter without breaking it; go straight to compression.
+  if (advance > available && !hasConnectedScript(newText)) {
     const minSpacing = base.letterSpacing - base.fontSize * 0.03;
     const needed = (available - advance) / glyphs;
     params.letterSpacing = Math.max(minSpacing, base.letterSpacing + needed);
