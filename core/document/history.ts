@@ -1,3 +1,4 @@
+import { applyHandwritingReadings, type HandwritingGroup, type HandwritingReading } from '../ocr/handwritingPass';
 import type { Id, IntellidocDocument, Page, RenderParams, TextAlignment, TextElement, TypographyEstimate } from './model';
 
 /**
@@ -19,6 +20,11 @@ export type EditCommand =
   | { type: 'addElement'; pageId: Id; element: TextElement }
   /** Move a user-added text box by (dx, dy) page pixels. */
   | { type: 'moveElement'; elementId: Id; dx: number; dy: number }
+  /**
+   * Handwriting readings for a page (background pass after OCR). Not a user
+   * edit: groups whose fragments the user already touched are left alone.
+   */
+  | { type: 'readHandwriting'; pageId: Id; groups: HandwritingGroup[]; readings: (HandwritingReading | undefined)[] }
   /** Processing output for a page (status, size, OCR content). Not a user edit. */
   | { type: 'updatePage'; pageId: Id; patch: Partial<Pick<Page, 'status' | 'statusMessage' | 'width' | 'height' | 'skew' | 'textElements' | 'layout'>> };
 
@@ -45,6 +51,20 @@ export function applyCommand(doc: IntellidocDocument, cmd: EditCommand): Intelli
     case 'updatePage': {
       if (!doc.pages.some((p) => p.id === cmd.pageId)) throw new Error(`Unknown page ${cmd.pageId}`);
       return { ...doc, pages: doc.pages.map((p) => (p.id === cmd.pageId ? { ...p, ...cmd.patch } : p)) };
+    }
+    case 'readHandwriting': {
+      const page = doc.pages.find((p) => p.id === cmd.pageId);
+      if (!page) throw new Error(`Unknown page ${cmd.pageId}`);
+      const untouched = (id: Id) => page.textElements.find((e) => e.id === id)?.state === 'original';
+      const keep = cmd.groups.map((g) => g.elementIds.every(untouched));
+      const content = applyHandwritingReadings(
+        page,
+        cmd.groups.filter((_, i) => keep[i]),
+        cmd.readings.filter((_, i) => keep[i]),
+        page.skew,
+        page.id,
+      );
+      return { ...doc, pages: doc.pages.map((p) => (p.id === page.id ? { ...p, ...content } : p)) };
     }
     case 'setText':
       return updateElement(doc, cmd.elementId, (el) => ({ ...el, text: cmd.text, state: editedState(el, cmd.text) }));

@@ -1,6 +1,6 @@
 'use client';
 
-import { AlignCenter, AlignLeft, AlignRight, Check, ClipboardCopy, ClipboardPaste, Loader2, Pipette, RotateCcw, Trash2, Undo } from 'lucide-react';
+import { AlignCenter, AlignLeft, AlignRight, Check, PenLine, ClipboardCopy, ClipboardPaste, Loader2, Pipette, RotateCcw, Trash2, Undo } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import type { EditCommand } from '@/core/document/history';
 import { elementIsModified, type RenderParams, type TextAlignment, type TextElement } from '@/core/document/model';
@@ -27,6 +27,8 @@ interface Props {
   picking: boolean;
   /** Text of the element the style was taken from, if any. */
   styleSourceText?: string;
+  /** Re-read the element with the handwriting model; resolves false if nothing credible was read. Absent when unavailable. */
+  onReadHandwriting?(): Promise<boolean>;
 }
 
 function pct(v: number) {
@@ -57,6 +59,28 @@ function Section({ title, children, action }: { title: string; children: ReactNo
       </div>
       {children}
     </section>
+  );
+}
+
+/** Handwriting is misread by the print OCR: offer the handwriting model for doubtful text. */
+function ReadHandwriting({ read }: { read(): Promise<boolean> }) {
+  const [state, setState] = useState<'idle' | 'reading' | 'failed'>('idle');
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-8 rounded-full text-[12.5px]"
+        disabled={state === 'reading'}
+        onClick={async () => {
+          setState('reading');
+          setState((await read().catch(() => false)) ? 'idle' : 'failed');
+        }}
+      >
+        {state === 'reading' ? <Loader2 className="animate-spin" /> : <PenLine />} Read as handwriting
+      </Button>
+      {state === 'failed' && <span className="text-[12px] text-tertiary">Couldn&apos;t read it. Type the text above.</span>}
+    </div>
   );
 }
 
@@ -165,6 +189,8 @@ export function PropertiesPanel(p: Props) {
               <ConfidenceTag value={element.ocrConfidence} />
               <span className="text-[12px] text-tertiary">Fix OCR mistakes here</span>
             </div>
+            {element.recognizer === 'handwriting' && <p className="text-[12px] text-muted-foreground">Read by the handwriting model. Please check it.</p>}
+            {p.onReadHandwriting && element.recognizer !== 'handwriting' && element.ocrConfidence < 85 && <ReadHandwriting key={element.id} read={p.onReadHandwriting} />}
           </div>
         )}
         {added && <p className="text-[12px] text-tertiary">Drag the box on the page to move it, or use the arrow keys.</p>}

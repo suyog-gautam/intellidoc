@@ -70,8 +70,8 @@ Measured with `npm run slice`, `SLICE_LOCALES=ne-NP`, on three phone photos and 
 | Document | Auto language | OCR | Notes |
 |---|---|---|---|
 | Printed letter (Devanagari, Preeti-style + Latin footer) | नेपाली + English (headline, 44 words) | 82 words, conf 88 | Body text read almost perfectly; edits of date, place, name, phone rendered with minimal changes |
-| Challan (printed form, handwritten entries, photo) | नेपाली + English (headline probe + locale) | printed labels read; **handwriting not** | Red serial "065" → "066" matches the ink; handwritten Latin entries are misread |
-| Ledger (printed form, handwritten entries, photo) | नेपाली + English (headline, 8 words) | printed headers read; **handwriting not** | Same limit |
+| Challan (printed form, handwritten entries, photo) | नेपाली + English (headline probe + locale) | printed labels by Tesseract; **handwritten entries by TrOCR** | Red serial "065" → "066" matches the ink. Handwriting model read "Rival Bag House", "Panda No 3", "208310610", "90001", "201", "45" (Tesseract: fragments like "Va m .") |
+| Ledger (printed form, handwritten entries, photo) | नेपाली + English (headline, 8 words) | printed headers by Tesseract; 20 of 99 suspect lines read by TrOCR | Amounts read well ("100 000", "428151", "5283"); cursive words partly wrong ("I Are Change care"), so they are flagged for checking |
 
 The challan photo gave a noisy headline probe (a mix of Devanagari, Bengali and Gurmukhi characters). When no headline script clearly wins (< 60%), the browser's language decides between the plausible ones.
 
@@ -108,10 +108,32 @@ It is applied as one continuous field over the rendered coverage rather than per
 
 **Amount.** The amount is measured from the scan's baseline wobble and calibrated per script: 0.055 per unit of variation for Latin hands, 0.10 for headline scripts, whose words are single components. Recovery is within about 0.05 of the drawn value, and automatic values are capped at 0.85. The panel offers Off / Subtle / Natural / Strong.
 
+### 3. Reading handwriting: TrOCR on-device (`lib/ocr/trocr.ts`, `core/ocr/handwritingPass.ts`)
+Tesseract is trained on print and breaks handwriting into fragments. After a page is read, a background pass re-reads the handwritten lines with Microsoft's TrOCR (small, trained on handwritten English lines; Xenova's quantized ONNX export) on ONNX Runtime Web (WASM, one thread, its own worker).
+
+- **Finding the lines** (reconstruction worker). Handwriting is found from the ink, not from Tesseract's boxes. The page is flattened and binarized (Sauvola). Components are filtered:
+  - dots, filled blobs (stamps, logos) and table rules are dropped;
+  - ink that Tesseract read confidently is dropped;
+  - Devanagari-style headline words are dropped.
+
+  The rest is grouped into lines, and a table rule between two components keeps table cells apart. Lines on dark background (photo edges), thick ornaments and lines mostly covered by confident text are skipped.
+- **Crops.** Each crop holds only the line's own ink on white: neighbouring print and form rules are removed. It is contrast-stretched and padded as the model saw its training lines (IAM).
+- **Decoding.** Greedy decoding, plus a second pass limited to digits and number punctuation. The English model prefers words ("good" for a handwritten "9000"), while forms are mostly edited for amounts and dates. The digit reading wins when the model finds it at least half as likely as the free reading. That held for every handwritten number measured; for words the ratio was ≤ 0.07.
+- **Acceptance.** Recognisers hallucinate on junk. A reading is used only if all of these hold:
+  - it is plausible: no word repeated three times, not one repeated letter, and no more characters than the line's width can hold;
+  - it is confident enough: numbers ≥ 0.25, words ≥ 0.45, short words ≥ 0.6;
+  - it is not one or two letters;
+  - it would not replace text the page OCR read in a non-Latin script.
+
+  Accepted readings replace the line's fragments with one element, or add an element for text Tesseract missed (e.g. a phone number on the Nepali letter). The element is marked "Read by the handwriting model. Please check it.", and its confidence is capped at 75% so it shows as "check".
+- **No undo step, no overwriting.** The readings arrive as a `readHandwriting` command applied with `replacePresent`. Lines the user edited in the meantime are left alone.
+- **Manual.** For any doubtful element (< 85%), the panel offers *Read as handwriting*. The reading goes through `setSourceText`, which can be undone.
+- **Cost.** 64 MB of model plus 14 MB of runtime, served same-origin from `public/vendor` and fetched at install time from Hugging Face. The model is pinned to a revision and checked by SHA-256 (`scripts/fetch-handwriting-model.mjs`). They are downloaded only when a Latin-script document is opened. Reading takes about 1 s per line on one CPU thread and runs only after the page is editable; at most 40 lines per page are read.
+- **Licence.** TrOCR's code is MIT (microsoft/unilm). The model card states no licence, so check it before commercial use. Offline installs skip the model, and the app then simply doesn't offer handwriting reading.
+
 ### Limits
-- **Reading handwriting.** Tesseract is trained on print. It reads neat block handwriting reasonably, and cursive poorly. Misreads are corrected in "Original says", which feeds straight into fitting and harvesting.
-  - The path forward is a line-level handwriting recogniser behind the existing `OcrEngine` interface, e.g. TrOCR via onnxruntime-web. It would be routed only to lines that look handwritten (low confidence plus baseline wobble) and vendored same-origin.
-  - Open multilingual handwriting models are still scarce outside English and Chinese.
+- **Handwriting in other scripts.** TrOCR here reads English (Latin letters and digits). No open, browser-sized handwriting model for Devanagari or most other scripts exists yet, so Tesseract's reading stays and "Original says" is the fix. The pass is designed so a per-script model can slot in (`TrocrEngine` takes any VisionEncoderDecoder export with the same inputs).
+- **Cursive words** are read less reliably than numbers and block letters (see the ledger). Readings are flagged for checking, never silently trusted.
 - **Cursive** words can't be cut into letters reliably, so they use the font plus variation. Glyph reuse works best on digits and printed handwriting, which is what forms and invoices mostly contain.
 
 A note on responsibility: making edits indistinguishable from the original can be misused on invoices and official papers. IntelliDoc keeps edits reversible and never modifies the original. A visible or metadata "edited" marker on export would be a sensible addition.

@@ -1,6 +1,7 @@
 import type { Page, PageLayout, TextElement, TypographyEstimate } from '@/core/document/model';
 import type { RecoveryCropMeta } from '@/core/ocr/recovery';
 import type { OcrResult } from '@/core/ocr/types';
+import type { Rect } from '@/core/geometry';
 
 /**
  * Message protocol of the reconstruction worker. Page rasters are transferred
@@ -19,6 +20,10 @@ export type WorkerRequest =
   | { type: 'analyze'; id: number; pageKey: string; page: Page; element: TextElement; languages?: string[] }
   | { type: 'render'; id: number; pageKey: string; page: Page }
   | { type: 'getOriginal'; id: number; pageKey: string }
+  /** Handwritten lines of a page as ink-only crops ready for the handwriting recogniser. */
+  | { type: 'handwritingLines'; id: number; pageKey: string; elements: TextElement[] }
+  /** A prepared crop of one page area, for reading a user-selected element as handwriting. */
+  | { type: 'handwritingCrop'; id: number; pageKey: string; rect: Rect }
   /** Small JPEG preview of the original page for the thumbnail rail. */
   | { type: 'thumbnail'; id: number; pageKey: string; width: number }
   /** Render a page and encode it (for export). */
@@ -32,4 +37,6 @@ export type WorkerResponse =
   | { type: 'analyzed'; id: number; typography: TypographyEstimate | undefined }
   | { type: 'raster'; id: number; width: number; height: number; buffer: ArrayBuffer; pending: string[]; overflowing: string[] }
   | { type: 'encoded'; id: number; blob: Blob }
+  | { type: 'handwritingLines'; id: number; lines: Array<{ elementIds: string[]; rect: Rect; width: number; height: number; buffer: ArrayBuffer }> }
+  | { type: 'handwritingCrop'; id: number; width: number; height: number; buffer: ArrayBuffer }
   | { type: 'error'; id: number; message: string };

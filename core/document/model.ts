@@ -102,6 +102,8 @@ export interface TextElement {
   state: EditState;
   /** 'ocr' = recognised in the scan (default); 'added' = a new text box placed by the user. */
   origin?: 'ocr' | 'added';
+  /** Set when the text was read by the handwriting recogniser (not Tesseract): the UI asks the user to check it. */
+  recognizer?: 'handwriting';
   /** Element whose style was applied (copy/paste or "match style"), for the UI. */
   styleSourceId?: Id;
   alignment: TextAlignment;

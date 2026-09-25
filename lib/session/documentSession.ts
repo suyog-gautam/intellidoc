@@ -1,7 +1,7 @@
 import type { EditCommand } from '@/core/document/history';
-import type { IntellidocDocument, Page } from '@/core/document/model';
+import type { IntellidocDocument, Page, TextElement } from '@/core/document/model';
 import type { RasterImage } from '@/core/image/raster';
-import { AUTO, normalizeLanguages } from '@/core/ocr/languages';
+import { AUTO, normalizeLanguages, scriptsOfLanguages } from '@/core/ocr/languages';
 import { chooseLanguages, HEADLINE_PROBE_LANGUAGES, MIN_HEADLINE_WORDS, type LanguageChoice } from '@/core/ocr/detectLanguages';
 import { TesseractEngine } from '@/core/ocr/tesseractEngine';
 import { mergeRecovered } from '@/core/ocr/recovery';
@@ -12,6 +12,9 @@ import { imagePageSource, type PageSource } from '@/lib/pdf/pageSource';
 import { PdfInputError } from '@/lib/pdf/pdfPageSource';
 import { vendorUrl } from '@/lib/browser/paths';
 import type { ReconstructionClient } from '@/lib/workers/reconstructionClient';
+import { handwritingAvailable, HandwritingClient } from '@/lib/workers/handwritingClient';
+import type { HandwritingReading } from '@/core/ocr/handwritingPass';
+import type { Rect } from '@/core/geometry';
 
 export interface OpenProgress {
   stage: 'validating' | 'decoding' | 'rendering' | 'preprocessing' | 'detecting' | 'ocr' | 'recovery' | 'building';
@@ -22,6 +25,9 @@ export interface OpenProgress {
 }
 
 let sharedOcr: { key: string; engine: OcrEngine } | undefined;
+
+/** Handwritten lines read per page at most (each takes about a second). */
+const MAX_HANDWRITING_LINES = 40;
 
 /** One Tesseract worker, re-created when the document languages change. */
 function createEngine(languages: readonly string[]): TesseractEngine {
@@ -129,6 +135,9 @@ export class DocumentSession {
   private listener: ((cmd: EditCommand) => void) | undefined;
   private backlog: EditCommand[] = [];
   private disposed = false;
+  private handwriting: HandwritingClient | undefined;
+  /** Handwriting passes run one page at a time, after OCR (the model is slow: ~1 s per line). */
+  private handwritingQueue: Promise<void> = Promise.resolve();
 
   private constructor(
     readonly initial: IntellidocDocument,
@@ -171,6 +180,7 @@ export class DocumentSession {
     try {
       const patch = await session.processPage(doc.pages[0], (p) => onProgress({ ...p, pageIndex: 0, pageCount: source.pageCount }));
       session.initial.pages[0] = { ...doc.pages[0], ...patch };
+      session.queueHandwriting(session.initial.pages[0]);
     } catch (e) {
       await source.dispose();
       throw e instanceof UploadError || e instanceof PdfInputError ? e : new UploadError(userMessage(e));
@@ -251,6 +261,7 @@ export class DocumentSession {
       try {
         const patch = await this.processPage(page, () => undefined);
         this.emit({ type: 'updatePage', pageId: page.id, patch });
+        this.queueHandwriting({ ...page, ...patch });
       } catch (e) {
         console.error(e);
         this.emit({ type: 'updatePage', pageId: page.id, patch: { status: 'failed', statusMessage: userMessage(e) } });
@@ -258,9 +269,58 @@ export class DocumentSession {
     }
   }
 
+  /** A shared handwriting reader (for the editor's "Read as handwriting"), or undefined if the model isn't deployed. */
+  async handwritingReader(): Promise<HandwritingClient | undefined> {
+    if (this.disposed || !(await handwritingAvailable())) return undefined;
+    return (this.handwriting ??= new HandwritingClient());
+  }
+
+  /** Can "Read as handwriting" be offered? (English model deployed, Latin-script document.) */
+  async canReadHandwriting(): Promise<boolean> {
+    return scriptsOfLanguages(this.langs).includes('latin') && (await handwritingAvailable());
+  }
+
+  /** Read one page area with the handwriting model, e.g. an element Tesseract misread. */
+  async readHandwriting(pageKey: string, rect: Rect): Promise<HandwritingReading | undefined> {
+    const reader = await this.handwritingReader();
+    if (!reader) return undefined;
+    // Margins as the background pass uses: the model expects some paper around the ink.
+    const m = rect.height * 0.3;
+    return reader.recognize(await this.client.handwritingCrop(pageKey, { x: rect.x - m, y: rect.y - m / 2, width: rect.width + 2 * m, height: rect.height + m }));
+  }
+
+  /**
+   * Re-read handwritten lines with the handwriting model in the background.
+   * Tesseract is trained on print and returns fragments for handwriting; the
+   * readings arrive as a `readHandwriting` command that replaces only lines
+   * the user hasn't touched meanwhile. English-only model, so Latin documents only.
+   */
+  private queueHandwriting(page: Page): void {
+    if (!scriptsOfLanguages(this.langs).includes('latin')) return;
+    const elements: TextElement[] = page.textElements;
+    this.handwritingQueue = this.handwritingQueue.then(async () => {
+      try {
+        const reader = await this.handwritingReader();
+        if (!reader) return;
+        const lines = (await this.client.handwritingLines(page.sourceRef, elements)).slice(0, MAX_HANDWRITING_LINES);
+        if (!lines.length || this.disposed) return;
+        const readings = [];
+        for (const line of lines) {
+          if (this.disposed) return;
+          readings.push(await reader.recognize(line.image));
+        }
+        this.emit({ type: 'readHandwriting', pageId: page.id, groups: lines.map(({ elementIds, rect }) => ({ elementIds, rect })), readings });
+      } catch (e) {
+        // Handwriting reading only improves results; never fail a page because of it.
+        console.warn('Handwriting pass skipped', e);
+      }
+    });
+  }
+
   async dispose(): Promise<void> {
     this.disposed = true;
     this.listener = undefined;
+    this.handwriting?.dispose();
     await this.source.dispose();
   }
 }

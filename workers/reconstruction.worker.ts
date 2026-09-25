@@ -12,6 +12,8 @@ import { pageContentFromOcr } from '@/core/pipeline/buildDocument';
 import { cropForLineOcr, findRecoveryRegions } from '@/core/ocr/recovery';
 import { estimatePageSkew, estimateTextHeight, grayToRaster, normalizeIllumination, prepareOcrImage } from '@/core/vision/preprocess';
 import { findHeadlineWords } from '@/core/vision/headlines';
+import { findHandwritingLines } from '@/core/ocr/handwritingPass';
+import { prepareHandwritingLine } from '@/core/ocr/handwritingLine';
 import { cropRaster } from '@/core/image/raster';
 import { cjkRegionsOfLanguages, scriptsOfLanguages } from '@/core/ocr/languages';
 import type { Page } from '@/core/document/model';
@@ -153,6 +155,21 @@ async function handle(req: WorkerRequest): Promise<void> {
       ctx.drawImage(full, 0, 0, w, h);
       full.close();
       post({ type: 'encoded', id: req.id, blob: await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 }) });
+      return;
+    }
+    case 'handwritingLines': {
+      const lines = findHandwritingLines(await store.get(req.pageKey), req.elements);
+      const out = lines.map((l) => {
+        const img = prepareHandwritingLine(l.image);
+        return { elementIds: l.elementIds, rect: l.rect, width: img.width, height: img.height, buffer: img.data.buffer as ArrayBuffer };
+      });
+      post({ type: 'handwritingLines', id: req.id, lines: out }, out.map((l) => l.buffer));
+      return;
+    }
+    case 'handwritingCrop': {
+      const img = prepareHandwritingLine(cropRaster(await store.get(req.pageKey), req.rect));
+      const buffer = img.data.buffer as ArrayBuffer;
+      post({ type: 'handwritingCrop', id: req.id, width: img.width, height: img.height, buffer }, [buffer]);
       return;
     }
     case 'getOriginal':

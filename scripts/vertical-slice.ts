@@ -23,6 +23,10 @@ import { TesseractEngine } from '@/core/ocr/tesseractEngine';
 import { chooseLanguages, HEADLINE_PROBE_LANGUAGES, MIN_HEADLINE_WORDS } from '@/core/ocr/detectLanguages';
 import { cjkRegionsOfLanguages, normalizeLanguages, scriptsOfLanguages } from '@/core/ocr/languages';
 import { findHeadlineWords } from '@/core/vision/headlines';
+import { applyHandwritingReadings, findHandwritingLines } from '@/core/ocr/handwritingPass';
+import { prepareHandwritingLine } from '@/core/ocr/handwritingLine';
+import { TrocrEngine } from '@/lib/ocr/trocr';
+import * as ort from 'onnxruntime-web';
 import type { FitOptions } from '@/core/typography/fit';
 import { recoverMissedText } from '@/core/ocr/recovery';
 import { scaleOcrResult, type OcrResult } from '@/core/ocr/types';
@@ -179,6 +183,8 @@ async function detectLanguages(original: RasterImage, ocrImage: RasterImage, ocr
   return choice.languages;
 }
 
+let trocr: TrocrEngine | undefined;
+
 async function processImage(input: InputPage) {
   const { name, original } = input;
   const outDir = path.join('output', name);
@@ -212,6 +218,25 @@ async function processImage(input: InputPage) {
     { sourceRef: 'page-0', physical: input.physical, width: original.width, height: original.height, skew: skew.angle, ocr, raster: original },
   ]);
   const page0 = (): Page => doc.pages[0];
+  // Handwriting: re-read low-confidence fragments with the on-device handwriting model.
+  const hwDir = path.join('public', 'vendor', 'models', 'trocr-small-handwritten');
+  if (fs.existsSync(path.join(hwDir, 'vocab.json'))) {
+    const th = Date.now();
+    const groups = findHandwritingLines(original, page0().textElements);
+    trocr ??= new TrocrEngine(ort, { bytes: async (f) => new Uint8Array(fs.readFileSync(path.join(hwDir, f))), json: async (f) => JSON.parse(fs.readFileSync(path.join(hwDir, f), 'utf8')) });
+    const readings = [];
+    for (const [i, g] of groups.entries()) {
+      const line = prepareHandwritingLine(g.image);
+      const r = await trocr.recognize(line);
+      readings.push(r);
+      writePng(path.join(outDir, `hw-${i}.png`), line);
+      console.log(`  hw-${i} ${JSON.stringify(r.text)} ${r.confidence.toFixed(2)}`);
+    }
+    const content = applyHandwritingReadings({ textElements: page0().textElements, layout: page0().layout }, groups, readings, skew.angle, page0().id);
+    doc = { ...doc, pages: [{ ...page0(), ...content }] };
+    const read = page0().textElements.filter((e) => e.recognizer === 'handwriting');
+    console.log(`Handwriting: ${groups.length} suspect lines, ${read.length} read in ${Date.now() - th}ms: ${read.map((e) => JSON.stringify(e.sourceText)).join(' ')}`);
+  }
   fs.writeFileSync(path.join(outDir, 'elements.txt'), page0().textElements.map((e) => `${e.id}\t${e.ocrConfidence.toFixed(0)}\t${e.sourceText}`).join('\n'));
   console.log(`Document model: ${page0().textElements.length} text elements on ${page0().layout.lines.length} lines`);
 

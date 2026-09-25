@@ -43,6 +43,14 @@ export function Editor({ client, session, onClose }: { client: ReconstructionCli
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const doc = ed.history.present;
+  const [canReadHandwriting, setCanReadHandwriting] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void session.canReadHandwriting().then((ok) => live && setCanReadHandwriting(ok));
+    return () => {
+      live = false;
+    };
+  }, [session]);
   const output = ed.rendered ?? ed.original;
   const selected = ed.page.textElements.find((e) => e.id === ed.selectedId);
   const pagesDone = doc.pages.filter((p) => p.status === 'ready' || p.status === 'failed').length;
@@ -137,6 +145,16 @@ export function Editor({ client, session, onClose }: { client: ReconstructionCli
 
   const status = ed.updating ? 'Updating…' : pagesDone < doc.pages.length ? `Reading pages ${pagesDone}/${doc.pages.length}` : undefined;
 
+  const readHandwriting = async (elementId: string) => {
+    const page = doc.pages.find((p) => p.textElements.some((e) => e.id === elementId));
+    const el = page?.textElements.find((e) => e.id === elementId);
+    if (!page || !el) return false;
+    const r = await session.readHandwriting(page.sourceRef, el.bbox);
+    if (!r?.text) return false;
+    ed.run({ type: 'setSourceText', elementId, sourceText: r.text });
+    return true;
+  };
+
   const panelProps = (el: typeof selected) => ({
     element: el,
     status: el ? ed.statusOf(el.id) : undefined,
@@ -148,6 +166,7 @@ export function Editor({ client, session, onClose }: { client: ReconstructionCli
     onPickStyle: () => (el && !picking ? ed.startPick(el.id) : ed.cancelPick()),
     picking,
     styleSourceText: styleSource?.text,
+    onReadHandwriting: canReadHandwriting && el ? () => readHandwriting(el.id) : undefined,
   });
 
   const viewProps = {

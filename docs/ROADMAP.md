@@ -21,7 +21,7 @@
 - **Main-thread pauses up to ~330 ms happen during upload** (decode/copy). The plan is to move decoding into the worker.
 - **Scripts not yet covered:** Odia, Sinhala, Myanmar, Khmer, Ethiopic, Georgian, Armenian (need OCR models + fonts in the catalogue). 17 writing systems are supported.
 - **Vertical CJK text** (top-to-bottom columns) is not supported; horizontal CJK is.
-- **Handwriting OCR relies on Tesseract**, which is weak on cursive. Correct the text in "Original says". See `docs/MULTILINGUAL_AND_HANDWRITING.md` for the TrOCR plan.
+- **Handwriting OCR is English-only** (TrOCR, on-device). Handwriting in other scripts relies on Tesseract; correct it in "Original says". Cursive words are read less reliably than numbers. See `docs/MULTILINGUAL_AND_HANDWRITING.md`.
 - **PDF export re-encodes each page as JPEG (quality 0.95).** This is visually lossless but not byte-identical, and a PDF's own text layer is not kept.
 - **Pages rotated by 90°** (scanned sideways without a /Rotate entry) are not auto-oriented yet.
 - **Very low-DPI scans (~90 DPI, 9 px text) render replacement text slightly softer than the crisp printed original.** Average darkness matches (measured: 226 vs 227 mean luminance), but the pixel-difference objective prefers soft, sub-pixel-spread glyphs over crisp stems. A coverage-contrast parameter was tried and not selected by the optimizer. Next step: an edge/structure-aware objective, or hinted rendering for small sizes.
@@ -51,6 +51,7 @@
 - Per-script font subsets loaded on demand; same-style fallbacks for scripts a family lacks
 - Glyph variants matched per character from the scan (e.g. Arial's footless `1` instead of Arimo's footed one)
 - Handwriting candidate fonts and measured natural variation
+- Handwriting reading: on-device TrOCR in the background for Latin-script documents, plus "Read as handwriting" per element
 
 ## Phase 2: fidelity
 - Per-document font prior; more families (Liberation, DejaVu, Noto, Georgia-like, Verdana-like); per-glyph alignment
@@ -64,5 +65,4 @@
 - Tables, forms, add-new-text, move/resize elements, difference view
 
 ## Phase 4
-- Alternative OCR engines (TrOCR for handwriting), ML layout, ML font matching, more scripts (Bengali, Arabic, CJK…)
-- Handwriting glyph reuse: compose edits from the writer's own characters
+- Handwriting recognisers for more scripts (Devanagari etc.) as open models appear, ML layout, ML font matching, more scripts (Bengali, Arabic, CJK…)

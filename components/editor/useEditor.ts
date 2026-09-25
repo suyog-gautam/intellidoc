@@ -64,7 +64,7 @@ export function styleLabel(style: TextStyle): string {
 /** Commands that change how an element looks, so its preview must be refreshed. */
 function touchedElement(cmd: EditCommand): string | undefined {
   if (cmd.type === 'addElement') return cmd.element.id;
-  if (cmd.type === 'updatePage' || cmd.type === 'setTypography') return undefined;
+  if (cmd.type === 'updatePage' || cmd.type === 'setTypography' || cmd.type === 'readHandwriting') return undefined;
   return cmd.elementId;
 }
 

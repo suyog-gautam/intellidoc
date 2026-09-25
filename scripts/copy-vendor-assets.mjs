@@ -51,6 +51,10 @@ for (const code of OCR_LANGUAGE_CODES) {
   copy(path.join(nm, '@tesseract.js-data', code, variant, `${code}.traineddata.gz`), path.join(out, 'tesseract', 'lang', `${code}.traineddata.gz`));
 }
 
+// ONNX Runtime Web (handwriting recognition): the CPU WASM build and its loader.
+fs.rmSync(path.join(out, 'ort'), { recursive: true, force: true });
+copyMatching(path.join(nm, 'onnxruntime-web', 'dist'), /^ort-wasm-simd-threaded\.(wasm|mjs)$/, path.join(out, 'ort'));
+
 // pdf.js worker plus the resources it fetches at runtime (CMaps for CJK text,
 // standard fonts, WASM image decoders for JPX/JBIG2 scans, ICC profiles).
 copy(path.join(nm, 'pdfjs-dist', 'build', 'pdf.worker.min.mjs'), path.join(out, 'pdfjs', 'pdf.worker.min.mjs'));
