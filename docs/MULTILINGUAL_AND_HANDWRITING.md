@@ -71,7 +71,7 @@ Measured with `npm run slice`, `SLICE_LOCALES=ne-NP`, on three phone photos and 
 |---|---|---|---|
 | Printed letter (Devanagari, Preeti-style + Latin footer) | नेपाली + English (headline, 44 words) | 82 words, conf 88 | Body text read almost perfectly; edits of date, place, name, phone rendered with minimal changes |
 | Challan (printed form, handwritten entries, photo) | नेपाली + English (headline probe + locale) | printed labels by Tesseract; **handwritten entries by TrOCR** | Red serial "065" → "066" matches the ink. Handwriting model read "Rival Bag House", "Panda No 3", "208310610", "90001", "201", "45" (Tesseract: fragments like "Va m .") |
-| Ledger (printed form, handwritten entries, photo) | नेपाली + English (headline, 8 words) | printed headers by Tesseract; 20 of 99 suspect lines read by TrOCR | Amounts read well ("100 000", "428151", "5283"); cursive words partly wrong ("I Are Change care"), so they are flagged for checking |
+| Ledger (printed form, handwritten entries, photo) | नेपाली + English (headline, 8 words) | printed headers by Tesseract; 15 of 99 suspect lines read by TrOCR | Amounts read well ("100 000", "5283", "04 06"); cursive words partly wrong ("I Are Change care"), so they are flagged for checking |
 
 The challan photo gave a noisy headline probe (a mix of Devanagari, Bengali and Gurmukhi characters). When no headline script clearly wins (< 60%), the browser's language decides between the plausible ones.
 
@@ -123,9 +123,11 @@ Tesseract is trained on print and breaks handwriting into fragments. After a pag
   - it is plausible: no word repeated three times, not one repeated letter, and no more characters than the line's width can hold;
   - it is confident enough: numbers ≥ 0.25, words ≥ 0.45, short words ≥ 0.6;
   - it is not one or two letters;
-  - it would not replace text the page OCR read in a non-Latin script.
+  - it would not replace text the page OCR read in a non-Latin script;
+  - it would not replace text the page OCR read confidently (≥ 85% and at least 3 letters or digits);
+  - if it is new text, no existing element already covers that area. On the Kishan letter, "PE100 -HDPE PIPES" had been read inside a longer mixed-script line.
 
-  Accepted readings replace the line's fragments with one element, or add an element for text Tesseract missed (e.g. a phone number on the Nepali letter). The element is marked "Read by the handwriting model. Please check it.", and its confidence is capped at 75% so it shows as "check".
+  Accepted readings replace the line's fragments with one element, or add an element for text Tesseract missed. The element is marked "Read by the handwriting model. Please check it.", and its confidence is capped at 75% so it shows as "check".
 - **No undo step, no overwriting.** The readings arrive as a `readHandwriting` command applied with `replacePresent`. Lines the user edited in the meantime are left alone.
 - **Manual.** For any doubtful element (< 85%), the panel offers *Read as handwriting*. The reading goes through `setSourceText`, which can be undone.
 - **Cost.** 64 MB of model plus 14 MB of runtime, served same-origin from `public/vendor` and fetched at install time from Hugging Face. The model is pinned to a revision and checked by SHA-256 (`scripts/fetch-handwriting-model.mjs`). They are downloaded only when a Latin-script document is opened. Reading takes about 1 s per line on one CPU thread and runs only after the page is editable. Readings appear line by line under a "Reading handwriting n/m" status, and at most 40 lines per page are read. On low-end devices (≤ 2 GB or ≤ 2 cores) the pass waits until the OCR worker is freed, so the two never share memory. With Save-Data on nothing is read automatically, and *Read as handwriting* still works. That button is offered for any recognised text, because print OCR is often confidently wrong on handwriting (92% for junk on the challan). A manual reading is refused if it is implausible or its confidence is below 0.3. The model unloads after a minute idle. A reading identical to the page OCR's leaves the element and its confidence untouched.

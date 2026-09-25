@@ -74,6 +74,20 @@ describe('handwriting readings', () => {
     expect(out).toBe(page);
   });
 
+  it('does not add a missed line where another element already has text', () => {
+    const d = doc();
+    const out = applyHandwritingReadings(d.pages[0], [{ elementIds: [], rect: { x: 0, y: 0, width: 100, height: 50 } }], [{ text: 'Name here', confidence: 0.9 }], 0, 'p0');
+    expect(out).toBe(d.pages[0]);
+  });
+
+  it('never overwrites text the page OCR read confidently', () => {
+    const d = doc();
+    const printed = d.pages[0].textElements.find((e) => e.sourceText === 'Name:')!;
+    const page = { ...d.pages[0], textElements: d.pages[0].textElements.map((e) => (e.id === printed.id ? { ...e, sourceText: '-HDPE PIPES', ocrConfidence: 91 } : e)) };
+    const out = applyHandwritingReadings(page, [{ elementIds: [printed.id], rect: line }], [{ text: 'RE.100 HOPE PIPES', confidence: 0.9 }], 0, 'p0');
+    expect(out).toBe(page);
+  });
+
   it('leaves elements alone when the reading agrees with the page OCR', () => {
     const d = doc();
     const ids = handwrittenIds(d);

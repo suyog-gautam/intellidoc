@@ -37,6 +37,8 @@ const SUSPECT_BELOW = 70;
  * selected text ("Read as handwriting").
  */
 const ACCEPT_ABOVE = 0.45;
+/** Page-OCR confidence (%) above which an element's text is kept as read. */
+const KEEP_CONFIDENT = 85;
 
 /** A handwritten line ready for the recogniser: an ink-only crop (the line's own strokes on white). */
 export interface HandwritingLine extends HandwritingGroup {
@@ -245,6 +247,14 @@ export function applyHandwritingReadings(
     const els = g.elementIds.map((id) => content.textElements.find((e) => e.id === id)!).filter(Boolean);
     // The model reads English: never replace text the page OCR read in another script.
     if (els.some((e) => [...scriptsOf(e.sourceText)].some((sc) => sc !== 'latin'))) return;
+    // New text only where the page OCR found none: elsewhere it would duplicate a line read as part of another element.
+    if (!els.length) {
+      const box = shrink(g.rect);
+      const covered = content.textElements.reduce((n, e) => n + overlap(e.bbox, box), 0);
+      if (covered > box.width * box.height * 0.3) return;
+    }
+    // Print the page OCR read confidently is not handwriting: keep it (the model would paraphrase it).
+    if (els.some((e) => e.ocrConfidence >= KEEP_CONFIDENT && e.sourceText.replace(/[^\p{L}\p{N}]/gu, '').length >= 3)) return;
     // Same text as the page OCR: nothing to fix, and its (often higher) confidence stays.
     const squash = (t: string) => t.replace(/\s+/g, '').toLowerCase();
     if (els.length && squash(els.map((e) => e.sourceText).join('')) === squash(r.text)) return;
