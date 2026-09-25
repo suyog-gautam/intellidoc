@@ -162,6 +162,7 @@ export function Editor({ client, session, onClose }: { client: ReconstructionCli
   const panelProps = (el: typeof selected) => ({
     element: el,
     status: el ? ed.statusOf(el.id) : undefined,
+    styleUnavailable: !!el && ed.styleUnavailable(el),
     overflowing: !!el && ed.overflowing.includes(el.id),
     run: ed.run,
     copiedStyle: ed.copiedStyle,

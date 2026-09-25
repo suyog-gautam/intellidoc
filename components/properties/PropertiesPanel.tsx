@@ -27,6 +27,8 @@ interface Props {
   picking: boolean;
   /** Text of the element the style was taken from, if any. */
   styleSourceText?: string;
+  /** Style analysis failed for this text; it stays as scanned until "Original says" is corrected. */
+  styleUnavailable?: boolean;
   /** Re-read the element with the handwriting model; resolves false if nothing credible was read. Absent when unavailable. */
   onReadHandwriting?(): Promise<boolean>;
 }
@@ -232,7 +234,11 @@ export function PropertiesPanel(p: Props) {
           )
         }
       >
-        {!t ? (
+        {!t && p.styleUnavailable ? (
+          <p className="rounded-sm bg-warn-light px-2.5 py-1.5 text-[12.5px] text-warn">
+            The style of this text couldn&apos;t be matched, so it stays as scanned. Check &ldquo;Original says&rdquo; above; correcting it retries the match.
+          </p>
+        ) : !t ? (
           <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
             <Loader2 className="size-4 animate-spin" /> Analysing the original style…
           </p>
