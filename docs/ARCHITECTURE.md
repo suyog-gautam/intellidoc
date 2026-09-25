@@ -18,12 +18,12 @@ original file ──► validate ──► PageSource (image | pdf.js) ──►
 | Path | Responsibility | Replaceable by |
 |---|---|---|
 | `core/document` | Model types, pure edit commands, history | – (source of truth) |
-| `core/ocr` | `OcrEngine` interface; `TesseractEngine` adapter; OCR language catalogue (`languages.ts`) | Any browser OCR engine |
+| `core/ocr` | `OcrEngine` interface; `TesseractEngine` adapter (incl. OSD script detection); 40-language catalogue; Auto language choice (`detectLanguages.ts`) | Any browser OCR engine |
 | `core/ocr/recovery.ts` | Second OCR pass: re-reads low-confidence words and finds text the page pass missed (e.g. values in table cells) as clean single-line crops; merges only credible improvements | – |
 | `core/layout` | Pixel-measured word styles (tight boxes, stroke weight, ink colour, glyph height); word → line → run grouping; style-aware run splitting; noise filtering; reading order | ML layout model |
 | `core/vision` | Sauvola binarization, components, rule detection, skew, rotated sampling, illumination | OpenCV.js / WASM kernels |
-| `core/text` | Scripts, font subsets, cluster segmentation (Devanagari conjuncts) | – |
-| `core/typography` | Ink metrics, region analysis, candidate fitting, glyph variants, replacement layout, font catalogue (36 open families: 22 Latin print incl. metric-compatible stand-ins for Arial, Times, Courier, Calibri, Cambria, Georgia; 11 Devanagari; 3 handwriting) | ML font matcher |
+| `core/text` | Scripts (17 writing systems), direction, cluster segmentation (Indic conjuncts, Thai marks) | – |
+| `core/typography` | Ink metrics, region analysis, candidate fitting, glyph variants, writer-glyph harvesting, replacement layout, font catalogue (85 open families across 17 scripts incl. metric-compatible stand-ins for Arial, Times, Courier, Calibri, Cambria, Georgia, and 11 handwriting styles) and the generated font manifest (`fontFaces.json`) | ML font matcher |
 | `core/reconstruction` | Push-pull inpainting, noise model, text removal | Patch-based / learned inpainting |
 | `core/rendering` | `TextRasterizer` (canvas), compositor, `renderPage` | WebGL renderer |
 | `core/pipeline` | Orchestration of the above per element/document | – |
@@ -42,8 +42,9 @@ original file ──► validate ──► PageSource (image | pdf.js) ──►
 - **Layouts:** thumbnail rail (lazy JPEG thumbnails from the worker) + canvas + properties panel on `lg`; canvas + panel on `md`; canvas + non-modal bottom sheet on phones.
 - **Start page:** only the start screen code ships up front. The first visit transfers about 245 KB, and repeat visits about 1 KB.
 - **Deferred until needed:** the editor UI, the document session (tesseract.js, pdf.js) and the processing worker load on demand. They're prefetched when the user hovers or focuses the upload card, or drags a file over it.
-- **Candidate fonts:** 36 families, one CSS family per subset (latin, latin-ext, cyrillic, greek, devanagari). The worker loads them only on the first typography analysis or render, and then only the subsets the text needs. The Latin faces are about 1 MB; Devanagari faces load only for Devanagari documents. `/vendor/*` is served with long cache lifetimes. See `docs/MULTILINGUAL_AND_HANDWRITING.md`.
-- **OCR languages:** chosen on the start screen (up to 3). Only the picked Tesseract models are downloaded.
+- **Candidate fonts:** 85 families, cut into ~2,500 file slices by unicode range (one CSS family per slice, listed in `core/typography/fontFaces.json`). The worker loads only the slices of the candidate fonts and characters at hand, e.g. a few of a CJK font's ~100 slices. `/vendor/*` is served with long cache lifetimes. See `docs/MULTILINGUAL_AND_HANDWRITING.md`.
+- **OCR languages:** Auto-detect by default (OSD script detection + headline detection + browser locale), or up to 3 picked on the start screen. Only the needed Tesseract models download.
+- **Static site size:** `public/vendor` is ~165 MB (fonts ~62 MB, OCR models and engines ~96 MB); a visitor downloads only what their document needs.
 
 ## Rendering layers
 

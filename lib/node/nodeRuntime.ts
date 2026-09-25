@@ -7,28 +7,29 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { RasterImage } from '@/core/image/raster';
 import { CanvasTextRasterizer, type CanvasFactory } from '@/core/rendering/textRasterizer';
-import { FONT_CATALOG, fontFaces } from '@/core/typography/fontCatalog';
+import type { FaceRef } from '@/core/typography/fontFaces';
 
 const root = process.cwd();
-let fontsRegistered = false;
+const registered = new Set<string>();
 
-export function registerCandidateFonts(): void {
-  if (fontsRegistered) return;
-  // Every subset is its own family, exactly as in the browser (see fontStack).
-  for (const font of FONT_CATALOG) {
-    for (const face of fontFaces(font)) {
-      const file = path.join(root, 'node_modules', '@fontsource', font.pkg, 'files', face.file);
-      if (fs.existsSync(file)) GlobalFonts.registerFromPath(file, face.family);
-    }
+/**
+ * Register font files with @napi-rs/canvas on first use (the rasterizer asks
+ * for exactly the slices a text needs), mirroring what the browser worker
+ * loads. Registering all ~2,500 slices up front would cost seconds.
+ */
+export function registerFaces(faces: Iterable<FaceRef>): void {
+  for (const face of faces) {
+    if (registered.has(face.file)) continue;
+    registered.add(face.file);
+    const file = path.join(root, 'node_modules', '@fontsource', face.pkg, 'files', face.file);
+    if (fs.existsSync(file)) GlobalFonts.registerFromPath(file, face.family);
   }
-  fontsRegistered = true;
 }
 
 export const nodeCanvasFactory: CanvasFactory = (w, h) => createCanvas(w, h) as unknown as ReturnType<CanvasFactory>;
 
 export function createNodeRasterizer(): CanvasTextRasterizer {
-  registerCandidateFonts();
-  return new CanvasTextRasterizer(nodeCanvasFactory);
+  return new CanvasTextRasterizer(nodeCanvasFactory, { ensureFaces: registerFaces });
 }
 
 export async function decodeImageFile(file: string): Promise<RasterImage> {

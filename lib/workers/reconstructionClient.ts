@@ -45,10 +45,10 @@ export class ReconstructionClient {
   }
 
   /** OCR working copy (illumination-flattened, upscaled for small text) and page skew. */
-  async preprocess(pageKey: string): Promise<{ ocrImage: Blob; skew: number; ocrScale: number }> {
-    const r = await this.call({ type: 'preprocess', pageKey });
+  async preprocess(pageKey: string, findHeadlines = false): Promise<{ ocrImage: Blob; skew: number; ocrScale: number; headlines?: { words: number; band?: Blob } }> {
+    const r = await this.call({ type: 'preprocess', pageKey, findHeadlines });
     if (r.type !== 'preprocessed') throw new Error('Unexpected worker response');
-    return { ocrImage: r.ocrImage, skew: r.skew, ocrScale: r.ocrScale };
+    return { ocrImage: r.ocrImage, skew: r.skew, ocrScale: r.ocrScale, headlines: r.headlines };
   }
 
   async recoveryCrops(pageKey: string, ocr: OcrResult): Promise<Array<{ meta: RecoveryCropMeta; image: Blob }>> {

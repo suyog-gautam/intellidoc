@@ -1,7 +1,7 @@
 import type { RenderParams } from '../document/model';
 import { createMask, distanceToBackground } from '../image/filters';
 import type { TextRasterizer } from '../rendering/textRasterizer';
-import { clusters } from '../text/script';
+import { clusters, hasConnectedScript, hasRtl } from '../text/script';
 import { labelComponents } from '../vision/components';
 import type { CandidateEvaluator } from './fit';
 import { getFont } from './fontCatalog';
@@ -87,6 +87,8 @@ export function chooseGlyphFonts(
   donors: readonly string[],
 ): Record<string, string> | undefined {
   const font = getFont(params.fontId);
+  // Right-to-left and joined text is drawn as one run; glyphs can't be swapped individually.
+  if (hasRtl(text) || hasConnectedScript(text)) return font.glyphDefaults && !hasRtl(text) ? { ...font.glyphDefaults } : undefined;
   const parts = clusters(text);
   const chosen: Record<string, string> = {};
   const pad = Math.max(1, params.blur * 2);
@@ -195,9 +197,12 @@ export function baselineWobble(region: RegionAnalysis): number {
 /**
  * Natural-variation amount for replacement handwriting, from the measured
  * wobble. Calibrated on synthetic handwriting: jitter j yields a wobble of
- * about 0.055·j for Latin hands (0.10·j for Devanagari, whose headline
- * adds variation); the Latin slope is used, capped at 1.
+ * about 0.055·j for Latin hands and 0.10·j for headline scripts (whole
+ * words are measured as one component, so their bottoms vary more). Capped
+ * below the maximum: an automatic choice should err on the calm side, and
+ * the user can raise it.
  */
-export function jitterFromWobble(wobble: number): number {
-  return Math.round(Math.max(0.15, Math.min(1, wobble / 0.055)) * 100) / 100;
+export function jitterFromWobble(wobble: number, connectedScript = false): number {
+  const slope = connectedScript ? 0.1 : 0.055;
+  return Math.round(Math.max(0.15, Math.min(0.85, wobble / slope)) * 100) / 100;
 }

@@ -19,7 +19,8 @@
 - **Emboldening is used instead of the real weight** in some fits. It looks close, but it's a stand-in.
 - **Analysis is lazy (~1–3 s per element in the worker).** It runs only for selected or edited elements.
 - **Main-thread pauses up to ~330 ms happen during upload** (decode/copy). The plan is to move decoding into the worker.
-- **RTL (Arabic, Hebrew) and CJK scripts are not supported yet.** Latin (incl. extended), Cyrillic, Greek and Devanagari are.
+- **Scripts not yet covered:** Odia, Sinhala, Myanmar, Khmer, Ethiopic, Georgian, Armenian (need OCR models + fonts in the catalogue). 17 writing systems are supported.
+- **Vertical CJK text** (top-to-bottom columns) is not supported; horizontal CJK is.
 - **Handwriting OCR relies on Tesseract**, which is weak on cursive. Correct the text in "Original says". See `docs/MULTILINGUAL_AND_HANDWRITING.md` for the TrOCR plan.
 - **PDF export re-encodes each page as JPEG (quality 0.95).** This is visually lossless but not byte-identical, and a PDF's own text layer is not kept.
 - **Pages rotated by 90°** (scanned sideways without a /Rotate entry) are not auto-oriented yet.
@@ -43,7 +44,9 @@
 - In-context progress: tags on the text itself, a panel status line, and a floating "Updating preview…" pill
 
 ## Languages, glyph variants, handwriting ✅
-- OCR in 15 languages (English, Nepali, Hindi, Marathi, French, German, Spanish, Portuguese, Italian, Dutch, Polish, Turkish, Russian, Ukrainian, Greek); language picker on the start screen
+- OCR in 40 languages covering the most spoken ones; Auto-detect (OSD + headline detection + locale) by default
+- 17 writing systems incl. Arabic/Urdu/Persian (RTL, Nastaliq), Hebrew, Chinese, Japanese, Korean, Thai and the major Indic scripts; 85 font families loaded per character range
+- Handwriting: the writer's own glyphs reused (varied instances), research-based per-instance variation, handwriting fonts for 7 scripts
 - Devanagari rendering: 11 candidate families, cluster-based placement (conjuncts), no tracking across the headline, headline kept out of rule detection so it's removed with the text
 - Per-script font subsets loaded on demand; same-style fallbacks for scripts a family lacks
 - Glyph variants matched per character from the scan (e.g. Arial's footless `1` instead of Arimo's footed one)

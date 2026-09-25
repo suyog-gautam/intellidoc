@@ -11,7 +11,7 @@ import { measureInk } from './inkMetrics';
  */
 export type TextStyle = Pick<
   RenderParams,
-  'fontId' | 'weight' | 'italic' | 'fontSize' | 'scaleX' | 'letterSpacing' | 'wordSpacing' | 'skewX' | 'embolden' | 'blur' | 'color' | 'opacity' | 'glyphFonts' | 'jitter'
+  'fontId' | 'weight' | 'italic' | 'fontSize' | 'scaleX' | 'letterSpacing' | 'wordSpacing' | 'skewX' | 'embolden' | 'blur' | 'color' | 'opacity' | 'glyphFonts' | 'jitter' | 'glyphSamples'
 >;
 
 export const STYLE_KEYS: readonly (keyof TextStyle)[] = [
@@ -29,6 +29,8 @@ export const STYLE_KEYS: readonly (keyof TextStyle)[] = [
   'opacity',
   'glyphFonts',
   'jitter',
+  // The writer's hand travels with the style: text added next to handwriting reuses the same glyphs.
+  'glyphSamples',
 ];
 
 export function extractStyle(p: RenderParams): TextStyle {
@@ -94,14 +96,17 @@ export const DEFAULT_JITTER = 0.35;
  * that font's catalogue defaults unless the user set them explicitly.
  * Pure (no rasteriser), so the UI shows exactly what will be rendered.
  */
-export function glyphStyle(base: RenderParams, overrides: Partial<RenderParams> | undefined): Pick<RenderParams, 'glyphFonts' | 'jitter'> {
+export function glyphStyle(base: RenderParams, overrides: Partial<RenderParams> | undefined): Pick<RenderParams, 'glyphFonts' | 'jitter' | 'glyphSamples'> {
   const fontId = overrides?.fontId ?? base.fontId;
   let glyphFonts = overrides?.glyphFonts ?? base.glyphFonts;
   let jitter = overrides?.jitter ?? base.jitter;
+  let glyphSamples = overrides?.glyphSamples ?? base.glyphSamples;
   if (fontId !== base.fontId) {
     const font = getFont(fontId);
     if (overrides?.glyphFonts === undefined) glyphFonts = font.glyphDefaults ? { ...font.glyphDefaults } : undefined;
     if (overrides?.jitter === undefined) jitter = font.category === 'handwriting' ? (base.jitter ?? DEFAULT_JITTER) : undefined;
+    // Handwritten samples don't belong in print.
+    if (overrides?.glyphSamples === undefined && font.category !== 'handwriting') glyphSamples = undefined;
   }
-  return { glyphFonts, jitter };
+  return { glyphFonts, jitter, glyphSamples };
 }

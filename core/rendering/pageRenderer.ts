@@ -42,7 +42,7 @@ export function renderPage(original: RasterImage, page: Page, rasterizer: TextRa
     if (el.state === 'deleted') continue;
     const layout = layoutReplacement(el.typography!, el.sourceText, el.text, el.alignment, rasterizer, el.styleOverrides);
     if (layout.overflow) overflowing.push(el.id);
-    compositeText(image, el.typography!, layout.params, el.text, layout.advance, rasterizer, hashString(`${el.id}:${el.text}`));
+    compositeText(image, el.typography!, layout.params, el.text, layout.advance, rasterizer, hashString(`${el.id}:${el.text}`), hashString(el.id));
   }
   return { image, pending, overflowing };
 }

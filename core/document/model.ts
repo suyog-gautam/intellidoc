@@ -156,11 +156,34 @@ export interface RenderParams {
    */
   glyphFonts?: Record<string, string>;
   /**
-   * Natural variation 0..1 for handwriting: small per-character baseline,
-   * size and angle wobble (deterministic per text), so replacements don't
+   * Natural variation 0..1 for handwriting: a smooth deformation field
+   * (baseline drift, local slant, size and shape changes, pen pressure),
+   * so no two instances of a character look alike and replacements don't
    * look typeset. 0 or absent for print.
    */
   jitter?: number;
+  /**
+   * The writer's own characters, cut from the scan (handwriting only):
+   * character → several real instances. Replacement text draws a character
+   * from these when available, choosing a different instance each time, and
+   * falls back to the font for characters the writer hasn't written yet.
+   */
+  glyphSamples?: Record<string, GlyphSample[]>;
+}
+
+/** One handwritten character instance harvested from the scan. */
+export interface GlyphSample {
+  /** Bitmap size, px (at `fontSize`). */
+  w: number;
+  h: number;
+  /** Ink coverage 0..255, row-major, base64. */
+  alpha: string;
+  /** Bitmap top-left relative to the pen position and the baseline, px (at `fontSize`). */
+  dx: number;
+  dy: number;
+  /** Font size and horizontal scale of the fit it was harvested with; rendering scales from these. */
+  fontSize: number;
+  scaleX: number;
 }
 
 export interface FidelityMetrics {

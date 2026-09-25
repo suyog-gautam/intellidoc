@@ -37,15 +37,18 @@ copy(path.join(nm, 'tesseract.js', 'dist', 'worker.min.js'), path.join(out, 'tes
 // tesseract.js picks plain / SIMD / relaxed-SIMD at runtime, so all three ship.
 fs.rmSync(path.join(out, 'tesseract', 'core'), { recursive: true, force: true });
 copyMatching(path.join(nm, 'tesseract.js-core'), /^tesseract-core(-simd|-relaxedsimd)?-lstm\.wasm\.js$/, path.join(out, 'tesseract', 'core'));
+// Script detection (OSD) runs on Tesseract's legacy engine: those full cores
+// load only when a document is opened with language "Auto".
+copyMatching(path.join(nm, 'tesseract.js-core'), /^tesseract-core(-simd|-relaxedsimd)?\.wasm\.js$/, path.join(out, 'tesseract', 'core'));
+copy(path.join(nm, '@tesseract.js-data', 'osd', '4.0.0', 'osd.traineddata.gz'), path.join(out, 'tesseract', 'lang', 'osd.traineddata.gz'));
 // OCR language models: every language of the catalogue (core/ocr/languages.ts).
 // The browser downloads only the ones the user picks, once, then caches them.
 const languageSource = fs.readFileSync(path.join(root, 'core', 'ocr', 'languages.ts'), 'utf8');
-const OCR_LANGUAGE_CODES = [...languageSource.matchAll(/\{ code: '([a-z_]+)'/g)].map((m) => m[1]);
+const OCR_LANGUAGE_CODES = [...languageSource.matchAll(/^\s*L\('([a-z_]+)'/gm)].map((m) => m[1]);
 for (const code of OCR_LANGUAGE_CODES) {
-  copy(
-    path.join(nm, '@tesseract.js-data', code, '4.0.0_best_int', `${code}.traineddata.gz`),
-    path.join(out, 'tesseract', 'lang', `${code}.traineddata.gz`),
-  );
+  // best_int (smaller, faster) where published; a few languages only ship the 4.0.0 model.
+  const variant = fs.existsSync(path.join(nm, '@tesseract.js-data', code, '4.0.0_best_int')) ? '4.0.0_best_int' : '4.0.0';
+  copy(path.join(nm, '@tesseract.js-data', code, variant, `${code}.traineddata.gz`), path.join(out, 'tesseract', 'lang', `${code}.traineddata.gz`));
 }
 
 // pdf.js worker plus the resources it fetches at runtime (CMaps for CJK text,
@@ -56,18 +59,20 @@ for (const dir of ['cmaps', 'standard_fonts', 'wasm', 'iccs']) {
   if (fs.existsSync(src)) fs.cpSync(src, path.join(out, 'pdfjs', dir), { recursive: true });
 }
 
-// Candidate fonts for typography matching (see core/typography/fontCatalog.ts).
-const fontsDir = path.join(nm, '@fontsource');
-let fonts = 0;
-// Only the document-matching candidates. The package list is read from the
-// font catalog (single source of truth: `font('<pkg>', ...)` entries); UI
-// fonts are bundled by next/font. Every shipped subset is copied; the app
-// downloads a subset only when a document contains such text.
-const catalogSource = fs.readFileSync(path.join(root, 'core', 'typography', 'fontCatalog.ts'), 'utf8');
-const CANDIDATE_PACKAGES = [...new Set([...catalogSource.matchAll(/^\s*font\('([a-z0-9-]+)'/gm)].map((m) => m[1]))];
+// Candidate fonts: exactly the files of the font manifest (generated from the
+// catalogue by scripts/build-font-manifest.mjs). The app downloads only the
+// slices a document's text needs.
+const manifest = JSON.parse(fs.readFileSync(path.join(root, 'core', 'typography', 'fontFaces.json'), 'utf8'));
 fs.rmSync(path.join(out, 'fonts'), { recursive: true, force: true });
-for (const pkg of CANDIDATE_PACKAGES) {
-  fonts += copyMatching(path.join(fontsDir, pkg, 'files'), /-(latin|latin-ext|cyrillic|greek|devanagari)-(400|700)-normal\.woff2$/, path.join(out, 'fonts'));
+let fonts = 0;
+for (const [pkg, { weights, slices }] of Object.entries(manifest.fonts)) {
+  for (const [id] of slices) {
+    for (const w of weights) {
+      const file = `${pkg}-${id}-${w}-normal.woff2`;
+      copy(path.join(nm, '@fontsource', pkg, 'files', file), path.join(out, 'fonts', file));
+      fonts++;
+    }
+  }
 }
 
 console.log(`[intellidoc] vendor assets copied (${fonts} font files, ${OCR_LANGUAGE_CODES.length} OCR languages)`);

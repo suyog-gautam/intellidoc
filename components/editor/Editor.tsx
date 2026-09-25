@@ -8,6 +8,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import type { Point } from '@/core/geometry';
 import { canExportPdf, exportPageImage, exportPdf } from '@/lib/browser/exportDocument';
 import type { DocumentSession } from '@/lib/session/documentSession';
+import { getOcrLanguage } from '@/core/ocr/languages';
 import type { ReconstructionClient } from '@/lib/workers/reconstructionClient';
 import { AppHeader } from '../AppHeader';
 import { PageStatusView } from '../pages/PageStatusView';
@@ -181,6 +182,7 @@ export function Editor({ client, session, onClose }: { client: ReconstructionCli
           <span className="hidden min-w-0 truncate text-[13px] text-muted-foreground md:block" title={doc.source.fileName}>
             {doc.source.fileName}
           </span>
+          <LanguageBadge languages={session.languages} detected={session.detection !== undefined} />
           <Button variant="ghost" className="h-9 rounded-lg" onClick={onClose} aria-label="New document">
             <FilePlus2 />
             <span className="hidden sm:inline">New</span>
@@ -299,5 +301,16 @@ export function Editor({ client, session, onClose }: { client: ReconstructionCli
         </MobileSheet>
       </div>
     </TooltipProvider>
+  );
+}
+
+/** The document's OCR languages; "detected" when Auto chose them. To change them, open the file again with other languages. */
+function LanguageBadge({ languages, detected }: { languages: readonly string[]; detected: boolean }) {
+  const names = languages.map((c) => getOcrLanguage(c)?.nativeName ?? c);
+  const label = `${detected ? 'Detected' : 'Language'}: ${names.join(' + ')}`;
+  return (
+    <span className="hidden shrink-0 rounded-full bg-canvas px-2.5 py-1 text-[12px] text-muted-foreground lg:inline" title={`${label}. To read it in other languages, open the file again and pick them.`}>
+      {label}
+    </span>
   );
 }

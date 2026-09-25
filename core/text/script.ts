@@ -1,101 +1,156 @@
 /**
- * Writing-system helpers: which font subsets a text needs, how it splits into
+ * Writing-system helpers: which scripts a text uses, how it splits into
  * user-perceived characters, and script properties that change how text may
- * be fitted and laid out. Environment-neutral (no DOM, no Node).
+ * be fitted and laid out (direction, joined letters). Environment-neutral.
+ *
+ * Which *font files* draw a character is a separate question, answered from
+ * the font manifest (see typography/fontFaces.ts).
  */
-
-/** Font file subsets shipped per candidate family (fontsource / Google Fonts naming). */
-export type FontSubset = 'latin' | 'latin-ext' | 'cyrillic' | 'greek' | 'devanagari';
 
 /** Writing systems IntelliDoc can recognise and render. */
-export type Script = 'latin' | 'cyrillic' | 'greek' | 'devanagari';
+export type Script =
+  | 'latin'
+  | 'cyrillic'
+  | 'greek'
+  | 'arabic'
+  | 'hebrew'
+  | 'devanagari'
+  | 'bengali'
+  | 'gurmukhi'
+  | 'gujarati'
+  | 'tamil'
+  | 'telugu'
+  | 'kannada'
+  | 'malayalam'
+  | 'thai'
+  /** Chinese characters (also used in Japanese kanji and Korean hanja). */
+  | 'han'
+  /** Japanese hiragana and katakana. */
+  | 'kana'
+  | 'hangul';
 
-type Range = readonly [number, number];
+/** Regional glyph conventions for Han characters: the same code point is drawn differently in each. */
+export type CjkRegion = 'sc' | 'tc' | 'jp' | 'kr';
 
-/**
- * Unicode ranges of each subset, exactly as the font files are cut
- * (fontsource `unicode-range` descriptors). Ordered by preference: a code
- * point covered by several subsets (e.g. ₹ is in latin-ext and devanagari)
- * belongs to the first.
- */
-const SUBSET_RANGES: ReadonlyArray<readonly [FontSubset, readonly Range[]]> = [
+type Block = readonly [number, number, Script];
+
+/** Unicode blocks per script, sorted by start. Anything else (digits, punctuation, symbols) is script-neutral. */
+const BLOCKS: readonly Block[] = (
   [
-    'latin',
-    [
-      [0x0000, 0x00ff], [0x0131, 0x0131], [0x0152, 0x0153], [0x02bb, 0x02bc], [0x02c6, 0x02c6], [0x02da, 0x02da], [0x02dc, 0x02dc],
-      [0x0304, 0x0304], [0x0308, 0x0308], [0x0329, 0x0329], [0x2000, 0x206f], [0x20ac, 0x20ac], [0x2122, 0x2122], [0x2191, 0x2191],
-      [0x2193, 0x2193], [0x2212, 0x2212], [0x2215, 0x2215], [0xfeff, 0xfeff], [0xfffd, 0xfffd],
-    ],
-  ],
-  [
-    'latin-ext',
-    [
-      [0x0100, 0x02ba], [0x02bd, 0x02c5], [0x02c7, 0x02cc], [0x02ce, 0x02d7], [0x02dd, 0x02ff], [0x1d00, 0x1dbf], [0x1e00, 0x1e9f],
-      [0x1ef2, 0x1eff], [0x2020, 0x2020], [0x20a0, 0x20ab], [0x20ad, 0x20c0], [0x2113, 0x2113], [0x2c60, 0x2c7f], [0xa720, 0xa7ff],
-    ],
-  ],
-  ['cyrillic', [[0x0301, 0x0301], [0x0400, 0x045f], [0x0490, 0x0491], [0x04b0, 0x04b1], [0x2116, 0x2116]]],
-  ['greek', [[0x0370, 0x0377], [0x037a, 0x037f], [0x0384, 0x038a], [0x038c, 0x038c], [0x038e, 0x03a1], [0x03a3, 0x03ff]]],
-  [
-    'devanagari',
-    [[0x0900, 0x097f], [0x1cd0, 0x1cf9], [0x200c, 0x200d], [0x20a8, 0x20a8], [0x20b9, 0x20b9], [0x20f0, 0x20f0], [0x25cc, 0x25cc], [0xa830, 0xa839], [0xa8e0, 0xa8ff]],
-  ],
-];
+    [0x0041, 0x005a, 'latin'],
+    [0x0061, 0x007a, 'latin'],
+    [0x00aa, 0x00aa, 'latin'],
+    [0x00ba, 0x00ba, 'latin'],
+    [0x00c0, 0x00d6, 'latin'],
+    [0x00d8, 0x00f6, 'latin'],
+    [0x00f8, 0x024f, 'latin'],
+    [0x0250, 0x02af, 'latin'],
+    [0x0370, 0x03ff, 'greek'],
+    [0x0400, 0x052f, 'cyrillic'],
+    [0x0590, 0x05ff, 'hebrew'],
+    [0x0600, 0x06ff, 'arabic'],
+    [0x0750, 0x077f, 'arabic'],
+    [0x0870, 0x08ff, 'arabic'],
+    [0x0900, 0x097f, 'devanagari'],
+    [0x0980, 0x09ff, 'bengali'],
+    [0x0a00, 0x0a7f, 'gurmukhi'],
+    [0x0a80, 0x0aff, 'gujarati'],
+    [0x0b80, 0x0bff, 'tamil'],
+    [0x0c00, 0x0c7f, 'telugu'],
+    [0x0c80, 0x0cff, 'kannada'],
+    [0x0d00, 0x0d7f, 'malayalam'],
+    [0x0e00, 0x0e7f, 'thai'],
+    [0x1100, 0x11ff, 'hangul'],
+    [0x1c80, 0x1c8f, 'cyrillic'],
+    [0x1cd0, 0x1cff, 'devanagari'],
+    [0x1e00, 0x1eff, 'latin'],
+    [0x1f00, 0x1fff, 'greek'],
+    [0x2c60, 0x2c7f, 'latin'],
+    [0x2de0, 0x2dff, 'cyrillic'],
+    [0x2e80, 0x2fdf, 'han'],
+    [0x3000, 0x303f, 'han'],
+    [0x3040, 0x30ff, 'kana'],
+    [0x3130, 0x318f, 'hangul'],
+    [0x31f0, 0x31ff, 'kana'],
+    [0x3400, 0x4dbf, 'han'],
+    [0x4e00, 0x9fff, 'han'],
+    [0xa640, 0xa69f, 'cyrillic'],
+    [0xa720, 0xa7ff, 'latin'],
+    [0xa8e0, 0xa8ff, 'devanagari'],
+    [0xa960, 0xa97f, 'hangul'],
+    [0xab30, 0xab6f, 'latin'],
+    [0xac00, 0xd7af, 'hangul'],
+    [0xd7b0, 0xd7ff, 'hangul'],
+    [0xf900, 0xfaff, 'han'],
+    [0xfb1d, 0xfb4f, 'hebrew'],
+    [0xfb50, 0xfdff, 'arabic'],
+    [0xfe70, 0xfeff, 'arabic'],
+    [0xff01, 0xff60, 'han'],
+    [0xff66, 0xff9f, 'kana'],
+    [0x20000, 0x3134f, 'han'],
+  ] as Block[]
+).sort((a, b) => a[0] - b[0]);
 
-export const FONT_SUBSETS: readonly FontSubset[] = SUBSET_RANGES.map(([s]) => s);
-
-/** The font subset a code point is drawn from, or undefined when no shipped subset covers it. */
-export function subsetOf(codePoint: number): FontSubset | undefined {
-  for (const [subset, ranges] of SUBSET_RANGES) {
-    for (const [a, b] of ranges) if (codePoint >= a && codePoint <= b) return subset;
+/** Script of one code point, or undefined for script-neutral characters (basic digits, punctuation, symbols). */
+export function scriptOf(codePoint: number): Script | undefined {
+  let lo = 0;
+  let hi = BLOCKS.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const [a, b, s] = BLOCKS[mid];
+    if (codePoint < a) hi = mid - 1;
+    else if (codePoint > b) lo = mid + 1;
+    else return s;
   }
   return undefined;
 }
 
-/** Font subsets needed to draw `text`. */
-export function subsetsOf(text: string): Set<FontSubset> {
-  const out = new Set<FontSubset>();
+/**
+ * Scripts used by `text`. Basic digits, punctuation and spaces are shared by
+ * every script and don't count, so "नेपाल 2081" is Devanagari and "17652"
+ * is script-neutral (empty set). Script-specific digits and punctuation do
+ * count ("२०८१", "٣٤", "।" are Devanagari / Arabic).
+ */
+export function scriptsOf(text: string): Set<Script> {
+  const out = new Set<Script>();
   for (const ch of text) {
-    const s = subsetOf(ch.codePointAt(0)!);
+    const s = scriptOf(ch.codePointAt(0)!);
     if (s) out.add(s);
   }
   return out;
 }
 
-export function scriptOfSubset(subset: FontSubset): Script {
-  return subset === 'latin-ext' ? 'latin' : subset;
-}
-
-/** Subsets a script's text can draw from. */
-export function subsetsOfScript(script: Script): FontSubset[] {
-  return script === 'latin' ? ['latin', 'latin-ext'] : [script];
-}
+const RTL: ReadonlySet<Script> = new Set(['arabic', 'hebrew']);
 
 /**
- * Scripts used by `text`. Basic Latin digits, punctuation and spaces are
- * shared by every script and don't count, so "नेपाल 2081" is Devanagari and
- * "17652" is script-neutral (empty set). Script-specific digits and
- * punctuation do count ("२०८१", "।" are Devanagari).
+ * Scripts whose letters are joined: by a continuous headline (Devanagari
+ * शिरोरेखा, Bengali, Gurmukhi) or by cursive joining (Arabic). Extra letter
+ * spacing or per-letter drawing would break the joins, so fitting, layout
+ * and handwriting variation treat such text as one unbroken run.
  */
-export function scriptsOf(text: string): Set<Script> {
-  const out = new Set<Script>();
-  for (const ch of text) {
-    const s = subsetOf(ch.codePointAt(0)!);
-    if (!s || (s === 'latin' && !/\p{L}/u.test(ch))) continue;
-    out.add(scriptOfSubset(s));
-  }
-  return out;
-}
-
-/**
- * Scripts whose letters are joined by a continuous stroke (the Devanagari
- * headline, shirorekha). Extra letter spacing would cut that stroke into
- * pieces, so fitting and layout must leave tracking alone for them.
- */
-const CONNECTED: ReadonlySet<Script> = new Set(['devanagari']);
+const CONNECTED: ReadonlySet<Script> = new Set(['devanagari', 'bengali', 'gurmukhi', 'arabic']);
 
 export function hasConnectedScript(text: string): boolean {
   for (const s of scriptsOf(text)) if (CONNECTED.has(s)) return true;
+  return false;
+}
+
+export function isRtlScript(script: Script): boolean {
+  return RTL.has(script);
+}
+
+/** Paragraph direction by the first strong character (like HTML dir="auto"). */
+export function textDirection(text: string): 'ltr' | 'rtl' {
+  for (const ch of text) {
+    const s = scriptOf(ch.codePointAt(0)!);
+    if (s) return RTL.has(s) ? 'rtl' : 'ltr';
+  }
+  return 'ltr';
+}
+
+/** Any right-to-left character at all (then per-cluster placement by logical order is wrong). */
+export function hasRtl(text: string): boolean {
+  for (const s of scriptsOf(text)) if (RTL.has(s)) return true;
   return false;
 }
 
@@ -116,9 +171,10 @@ function graphemeSegmenter(): SegmenterLike | null {
 
 /**
  * Split text into clusters that must be drawn as one unit: grapheme clusters
- * (a letter with its combining marks, emoji sequences) and, for Indic
- * scripts, whole conjuncts (क्ष, त्रि), whose glyphs the font shapes
- * together. Drawing a matra or virama on its own shows a dotted circle.
+ * (a letter with its combining marks, Thai vowel and tone marks, emoji
+ * sequences) and, for Indic scripts, whole conjuncts (क्ष, त्रि), whose
+ * glyphs the font shapes together. Drawing a matra or virama on its own
+ * shows a dotted circle.
  *
  * Unicode 15.1 grapheme rules already keep conjuncts together; the explicit
  * virama merge makes that independent of the runtime's ICU version.

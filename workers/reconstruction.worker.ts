@@ -11,20 +11,35 @@ import { CanvasTextRasterizer, type CanvasLike } from '@/core/rendering/textRast
 import { pageContentFromOcr } from '@/core/pipeline/buildDocument';
 import { cropForLineOcr, findRecoveryRegions } from '@/core/ocr/recovery';
 import { estimatePageSkew, estimateTextHeight, grayToRaster, normalizeIllumination, prepareOcrImage } from '@/core/vision/preprocess';
-import { scriptsOfLanguages } from '@/core/ocr/languages';
-import { subsetsOfScript } from '@/core/text/script';
+import { findHeadlineWords } from '@/core/vision/headlines';
+import { cropRaster } from '@/core/image/raster';
+import { cjkRegionsOfLanguages, scriptsOfLanguages } from '@/core/ocr/languages';
 import type { Page } from '@/core/document/model';
-import { loadCandidateFonts, loadFontsForText } from '@/lib/browser/fonts';
+import { elementIsModified } from '@/core/document/model';
+import { candidateFonts } from '@/core/typography/fontFaces';
+import { loadFontsFor } from '@/lib/browser/fonts';
 import { PageStore } from './pageStore';
 import type { WorkerRequest, WorkerResponse } from './protocol';
 
 declare const self: DedicatedWorkerGlobalScope & { fonts: FontFaceSet };
 
-// Candidate fonts are only needed once text is analysed or rendered, not for
-// OCR, so they load on first use: Latin faces first, other subsets
-// (Devanagari, Cyrillic, ...) only when the text at hand needs them.
-const fontsForTexts = (texts: Iterable<string>) => loadFontsForText(self.fonts, texts);
-const pageTexts = (page: Page) => page.textElements.flatMap((e) => (e.state === 'original' ? [] : [e.text, e.sourceText]));
+// Fonts are only needed once text is analysed or rendered, not for OCR, and
+// then only the slices of the fonts and characters at hand (a page of
+// Chinese loads a few of Noto Sans SC's ~100 slices).
+/** "HXE": capital height reference used when the user switches fonts (styleTransfer.capHeight). */
+const REFERENCE = 'HXE';
+
+/** Fonts each modified element renders with (detected, chosen, glyph-variant donors) and their texts. */
+function pageFontsReady(page: Page): Promise<unknown> {
+  const loads: Promise<void>[] = [];
+  for (const el of page.textElements) {
+    if (!elementIsModified(el) || !el.typography) continue;
+    const p = { ...el.typography.params, ...el.styleOverrides };
+    const ids = new Set([el.typography.params.fontId, p.fontId, ...Object.values(p.glyphFonts ?? {})]);
+    loads.push(loadFontsFor(self.fonts, ids, [el.text, el.sourceText, REFERENCE]));
+  }
+  return Promise.all(loads);
+}
 const rasterizer = new CanvasTextRasterizer((w, h) => {
   const canvas = new OffscreenCanvas(w, h);
   return {
@@ -76,8 +91,20 @@ async function handle(req: WorkerRequest): Promise<void> {
       const page = await store.get(req.pageKey);
       const skew = estimatePageSkew(page);
       const working = prepareOcrImage(page);
-      const ocrImage = await encode(grayToRaster(working.image), 'image/png');
-      post({ type: 'preprocessed', id: req.id, ocrImage, skew: skew.angle, ocrScale: working.scale });
+      const ocrRaster = grayToRaster(working.image);
+      const ocrImage = await encode(ocrRaster, 'image/png');
+      let headlines: { words: number; band?: Blob } | undefined;
+      if (req.findHeadlines) {
+        const found = findHeadlineWords(page, working.textHeight);
+        const band = found.band && {
+          x: 0,
+          y: Math.floor(found.band.y * working.scale),
+          width: ocrRaster.width,
+          height: Math.min(ocrRaster.height - Math.floor(found.band.y * working.scale), Math.ceil(found.band.height * working.scale)),
+        };
+        headlines = { words: found.words, band: band && band.height > 0 ? await encode(cropRaster(ocrRaster, band), 'image/png') : undefined };
+      }
+      post({ type: 'preprocessed', id: req.id, ocrImage, skew: skew.angle, ocrScale: working.scale, headlines });
       return;
     }
     case 'recoveryCrops': {
@@ -99,15 +126,18 @@ async function handle(req: WorkerRequest): Promise<void> {
       return;
     }
     case 'analyze': {
-      const contextScripts = scriptsOfLanguages(req.languages ?? []);
+      const languages = req.languages ?? [];
+      const contextScripts = scriptsOfLanguages(languages);
+      const cjkRegions = cjkRegionsOfLanguages(languages);
       // Candidates for numbers in, say, a Nepali document include Devanagari families.
-      await Promise.all([fontsForTexts([req.element.sourceText, req.element.text]), loadCandidateFonts(self.fonts, contextScripts.filter((c) => c !== 'latin').flatMap(subsetsOfScript))]);
-      const est = analyzeElement(await store.get(req.pageKey), req.element, rasterizer, { contextScripts });
+      const candidates = candidateFonts(req.element.sourceText.trim(), { scripts: contextScripts, cjkRegions }).map((f) => f.id);
+      await loadFontsFor(self.fonts, candidates, [req.element.sourceText, req.element.text, REFERENCE]);
+      const est = analyzeElement(await store.get(req.pageKey), req.element, rasterizer, { contextScripts, cjkRegions });
       post({ type: 'analyzed', id: req.id, typography: est && clipSlotToNeighbours(est, req.page, req.element) });
       return;
     }
     case 'render': {
-      await fontsForTexts(pageTexts(req.page));
+      await pageFontsReady(req.page);
       const result = renderPage(await store.get(req.pageKey), req.page, rasterizer);
       postRaster(req.id, result.image, result.pending, result.overflowing);
       return;
@@ -130,7 +160,7 @@ async function handle(req: WorkerRequest): Promise<void> {
       postRaster(req.id, cloneRaster(await store.get(req.pageKey)));
       return;
     case 'encodePage': {
-      await fontsForTexts(pageTexts(req.page));
+      await pageFontsReady(req.page);
       const result = renderPage(await store.get(req.pageKey), req.page, rasterizer);
       post({ type: 'encoded', id: req.id, blob: await encode(result.image, req.mimeType, req.quality) });
       return;

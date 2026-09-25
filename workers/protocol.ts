@@ -9,7 +9,8 @@ import type { OcrResult } from '@/core/ocr/types';
  */
 export type WorkerRequest =
   | { type: 'loadPage'; id: number; pageKey: string; width: number; height: number; buffer: ArrayBuffer }
-  | { type: 'preprocess'; id: number; pageKey: string }
+  /** `findHeadlines`: also look for headline-joined words (Devanagari, Bengali, Gurmukhi) for script auto-detection. */
+  | { type: 'preprocess'; id: number; pageKey: string; findHeadlines?: boolean }
   /** Layout from OCR words + page pixels (word styles, style-aware runs). OCR in page coordinates. */
   | { type: 'buildPage'; id: number; pageKey: string; pageId: string; ocr: OcrResult; skew: number }
   /** OCR recovery: crops of low-confidence words and uncovered text, for single-line re-recognition. */
@@ -25,7 +26,7 @@ export type WorkerRequest =
 
 export type WorkerResponse =
   | { type: 'ok'; id: number }
-  | { type: 'preprocessed'; id: number; ocrImage: Blob; skew: number; ocrScale: number }
+  | { type: 'preprocessed'; id: number; ocrImage: Blob; skew: number; ocrScale: number; headlines?: { words: number; band?: Blob } }
   | { type: 'pageBuilt'; id: number; textElements: TextElement[]; layout: PageLayout }
   | { type: 'recoveryCrops'; id: number; crops: Array<{ meta: RecoveryCropMeta; image: Blob }> }
   | { type: 'analyzed'; id: number; typography: TypographyEstimate | undefined }

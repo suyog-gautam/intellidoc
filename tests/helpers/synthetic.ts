@@ -48,10 +48,36 @@ export function defaultParams(overrides: Partial<RenderParams> = {}): RenderPara
  * Draw text with known parameters into `page` inside the oriented frame, like
  * a printer + scanner would. Returns the tight OCR-like box of the text.
  */
-export function drawText(page: RasterImage, rasterizer: TextRasterizer, text: string, frame: OrientedBox, params: RenderParams): OrientedBox {
+export function drawText(page: RasterImage, rasterizer: TextRasterizer, text: string, frame: OrientedBox, params: RenderParams, opts: { inkBox?: boolean } = {}): OrientedBox {
   const cov = renderCoverage(rasterizer, text, params, Math.round(frame.width), Math.round(frame.height));
   compositeUprightInk(page, frame, cov, () => params.color);
-  return textBox(rasterizer, text, frame, params);
+  return opts.inkBox ? inkBox(cov, frame) : textBox(rasterizer, text, frame, params);
+}
+
+/**
+ * OCR-like box from the drawn ink itself, as Tesseract reports it. Needed
+ * for scripts whose extent isn't Latin-shaped (Nastaliq words rise steeply
+ * above the baseline; Thai and Indic vowel marks stack above and below).
+ */
+function inkBox(cov: { width: number; height: number; data: Float32Array }, frame: OrientedBox): OrientedBox {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (let y = 0; y < cov.height; y++) {
+    for (let x = 0; x < cov.width; x++) {
+      if (cov.data[y * cov.width + x] < 0.3) continue;
+      x0 = Math.min(x0, x);
+      y0 = Math.min(y0, y);
+      x1 = Math.max(x1, x + 1);
+      y1 = Math.max(y1, y + 1);
+    }
+  }
+  const c = Math.cos(frame.angle);
+  const s = Math.sin(frame.angle);
+  const lx = (x0 + x1) / 2 - frame.width / 2;
+  const ly = (y0 + y1) / 2 - frame.height / 2;
+  return { cx: frame.cx + lx * c - ly * s, cy: frame.cy + lx * s + ly * c, width: x1 - x0, height: y1 - y0, angle: frame.angle };
 }
 
 /** Tight OCR-like box of text drawn with {@link drawText}. */

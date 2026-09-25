@@ -1,7 +1,8 @@
 import type { EditCommand } from '@/core/document/history';
 import type { IntellidocDocument, Page } from '@/core/document/model';
 import type { RasterImage } from '@/core/image/raster';
-import { normalizeLanguages } from '@/core/ocr/languages';
+import { AUTO, normalizeLanguages } from '@/core/ocr/languages';
+import { chooseLanguages, HEADLINE_PROBE_LANGUAGES, MIN_HEADLINE_WORDS, type LanguageChoice } from '@/core/ocr/detectLanguages';
 import { TesseractEngine } from '@/core/ocr/tesseractEngine';
 import { mergeRecovered } from '@/core/ocr/recovery';
 import { OcrError, scaleOcrResult, type OcrEngine, type OcrResult } from '@/core/ocr/types';
@@ -13,7 +14,7 @@ import { vendorUrl } from '@/lib/browser/paths';
 import type { ReconstructionClient } from '@/lib/workers/reconstructionClient';
 
 export interface OpenProgress {
-  stage: 'validating' | 'decoding' | 'rendering' | 'preprocessing' | 'ocr' | 'recovery' | 'building';
+  stage: 'validating' | 'decoding' | 'rendering' | 'preprocessing' | 'detecting' | 'ocr' | 'recovery' | 'building';
   /** 0..1 within the stage, when known. */
   progress?: number;
   pageIndex?: number;
@@ -23,21 +24,58 @@ export interface OpenProgress {
 let sharedOcr: { key: string; engine: OcrEngine } | undefined;
 
 /** One Tesseract worker, re-created when the document languages change. */
+function createEngine(languages: readonly string[]): TesseractEngine {
+  return new TesseractEngine({
+    workerPath: vendorUrl('tesseract/worker.min.js'),
+    corePath: vendorUrl('tesseract/core'),
+    langPath: vendorUrl('tesseract/lang'),
+    languages: [...languages],
+  });
+}
+
 function ocrEngine(languages: readonly string[]): OcrEngine {
   const key = languages.join('+');
   if (sharedOcr?.key !== key) {
     void sharedOcr?.engine.dispose();
-    sharedOcr = {
-      key,
-      engine: new TesseractEngine({
-        workerPath: vendorUrl('tesseract/worker.min.js'),
-        corePath: vendorUrl('tesseract/core'),
-        langPath: vendorUrl('tesseract/lang'),
-        languages: [...languages],
-      }),
-    };
+    sharedOcr = { key, engine: createEngine(languages) };
   }
   return sharedOcr.engine;
+}
+
+/** Engine used only for script detection (legacy OSD worker + headline probe), kept for later documents. */
+let detectionEngine: TesseractEngine | undefined;
+
+function browserLocales(): string[] {
+  try {
+    return [...(navigator.languages ?? [navigator.language])].filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * "Auto" language: detect page 1's script and choose the OCR languages
+ * (see core/ocr/detectLanguages.ts). Only runs when the user left the
+ * language on Auto; downloads the OSD engine (~9 MB, cached) and, for
+ * headline scripts, three small recognition models.
+ */
+async function detectLanguages(ocrImage: Blob, headlines: { words: number; band?: Blob } | undefined): Promise<LanguageChoice> {
+  const locales = browserLocales();
+  detectionEngine ??= createEngine(['eng']);
+  const osd = await detectionEngine.detectScript({ kind: 'blob', blob: ocrImage }).catch(() => undefined);
+  let headlineProbeText: string | undefined;
+  if (headlines && headlines.words >= MIN_HEADLINE_WORDS && headlines.band) {
+    const probe = createEngine(HEADLINE_PROBE_LANGUAGES);
+    try {
+      const r = await probe.recognize({ kind: 'blob', blob: headlines.band });
+      headlineProbeText = r.words.map((w) => w.text).join(' ');
+    } catch {
+      // No probe: OSD or the locale decides.
+    } finally {
+      void probe.dispose();
+    }
+  }
+  return chooseLanguages({ osd, headlineWords: headlines?.words ?? 0, headlineProbeText, locales });
 }
 
 async function decodeImage(blob: Blob): Promise<RasterImage> {
@@ -96,9 +134,17 @@ export class DocumentSession {
     readonly initial: IntellidocDocument,
     private readonly source: PageSource,
     private readonly client: ReconstructionClient,
-    /** Tesseract language codes, e.g. ['nep', 'eng']. */
-    readonly languages: readonly string[],
+    /** Tesseract language codes, e.g. ['nep', 'eng'], or ['auto'] until page 1 has been detected. */
+    private langs: readonly string[],
   ) {}
+
+  /** OCR languages of the document (detected ones once page 1 is read in Auto mode). */
+  get languages(): readonly string[] {
+    return this.langs;
+  }
+
+  /** How Auto chose the languages, if it did. */
+  detection: LanguageChoice | undefined;
 
   static async open(file: File, client: ReconstructionClient, onProgress: (p: OpenProgress) => void, languageCodes: Iterable<string> = ['eng']): Promise<DocumentSession> {
     const languages = normalizeLanguages(languageCodes);
@@ -159,7 +205,14 @@ export class DocumentSession {
     await this.client.loadPage(page.sourceRef, raster);
 
     onProgress({ stage: 'preprocessing' });
-    const { ocrImage, skew, ocrScale } = await this.client.preprocess(page.sourceRef);
+    const auto = this.langs[0] === AUTO;
+    const { ocrImage, skew, ocrScale, headlines } = await this.client.preprocess(page.sourceRef, auto);
+    if (auto) {
+      onProgress({ stage: 'detecting' });
+      this.detection = await detectLanguages(ocrImage, headlines);
+      this.langs = this.detection.languages;
+      this.initial.processing.ocrLanguages = [...this.langs];
+    }
 
     onProgress({ stage: 'ocr', progress: 0 });
     const ocr = await ocrEngine(this.languages).recognize({ kind: 'blob', blob: ocrImage }, (p) =>

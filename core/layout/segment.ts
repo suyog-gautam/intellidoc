@@ -1,3 +1,4 @@
+import { scriptOf, textDirection } from '../text/script';
 import { unionRects, verticalOverlap, type Rect } from '../geometry';
 import type { OcrWord } from '../ocr/types';
 import type { StyledWord, WordStyle } from './wordStyle';
@@ -95,6 +96,9 @@ export function learnWeightModel(normalizedWeights: readonly number[], minSepara
 function reliable(w: StyledWord): WordStyle | undefined {
   const s = w.style;
   if (!s || PUNCTUATION_ONLY.test(w.text) || s.strokeWidth <= 0) return undefined;
+  // Chinese/Japanese "words" are one or two characters whose ink density depends on the
+  // character's complexity (月 vs 票), not the font weight: not usable for style splits.
+  if ([...w.text].some((ch) => unspaced(ch))) return undefined;
   // Very little ink (one or two short glyphs) gives a noisy stroke estimate.
   return s.inkMass >= s.glyphHeight * 1.5 ? s : undefined;
 }
@@ -214,7 +218,7 @@ function makeRun(words: StyledWord[]): SegmentedRun {
   return {
     words,
     bbox: unionRects(words.map((w) => w.bbox)),
-    text: words.map((w) => w.text).join(' '),
+    text: runText(words),
     confidence: Math.min(...words.map((w) => w.confidence)),
   };
 }
@@ -267,7 +271,11 @@ export function segmentWords(words: readonly StyledWord[], opts: SegmentOptions 
     let bestOverlap = 0;
     for (const line of lines) {
       const last = line[line.length - 1];
-      if (word.bbox.x < last.bbox.x + last.bbox.width * 0.5) continue;
+      // Tesseract's CJK boxes overlap and nest (one box spanning "增值税" contains "税"): a word
+      // inside the previous word's extent is on the same line, not the start of another.
+      const nested = Math.min(word.bbox.x + word.bbox.width, last.bbox.x + last.bbox.width) - Math.max(word.bbox.x, last.bbox.x) >= word.bbox.width * 0.5;
+      // Centres, not left edges: tightly packed CJK boxes overlap their neighbours by a few px.
+      if (word.bbox.x + word.bbox.width / 2 <= last.bbox.x + last.bbox.width / 2 && !nested) continue;
       const minH = Math.min(word.bbox.height, last.bbox.height);
       const maxH = Math.max(word.bbox.height, last.bbox.height);
       if (maxH > minH * 2.2) continue;
@@ -281,6 +289,7 @@ export function segmentWords(words: readonly StyledWord[], opts: SegmentOptions 
     if (best) best.push(word);
     else lines.push([word]);
   }
+  for (const line of lines) line.sort((a, b) => a.bbox.x - b.bbox.x);
 
   // Stroke width is normalised by text size so headings aren't mistaken for
   // bold. Body-size lines use the page's body height (per-line glyph heights
@@ -310,7 +319,7 @@ export function segmentWords(words: readonly StyledWord[], opts: SegmentOptions 
         runs.push({
           words: group,
           bbox: unionRects(group.map((w) => w.bbox)),
-          text: group.map((w) => w.text).join(' '),
+          text: runText(group),
           confidence: Math.min(...group.map((w) => w.confidence)),
         });
       }
@@ -333,4 +342,30 @@ export function segmentWords(words: readonly StyledWord[], opts: SegmentOptions 
   // Reading order: top-to-bottom by line centre, then left-to-right.
   result.sort((a, b) => a.bbox.y + a.bbox.height / 2 - (b.bbox.y + b.bbox.height / 2));
   return result;
+}
+
+/** Scripts written without spaces between words. */
+const UNSPACED = new Set(['han', 'kana', 'thai']);
+
+function unspaced(ch: string | undefined): boolean {
+  if (!ch) return false;
+  const s = scriptOf(ch.codePointAt(0)!);
+  return s !== undefined && UNSPACED.has(s);
+}
+
+/**
+ * Text of a run in reading order. OCR words arrive left to right; a
+ * right-to-left run (Arabic, Hebrew, Urdu, Persian) reads from the
+ * rightmost word. Chinese, Japanese and Thai don't separate words with
+ * spaces, and Tesseract's word breaks inside them are not real spaces
+ * ("2024年9月" stays together).
+ */
+export function runText(words: readonly { text: string }[]): string {
+  const ordered = textDirection(words.map((w) => w.text).join(' ')) === 'rtl' ? [...words].reverse() : words;
+  let out = '';
+  for (const w of ordered) {
+    if (out && !(unspaced([...out].pop()) || unspaced([...w.text][0]))) out += ' ';
+    out += w.text;
+  }
+  return out;
 }

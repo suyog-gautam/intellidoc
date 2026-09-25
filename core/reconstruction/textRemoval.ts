@@ -1,6 +1,7 @@
 import type { TypographyEstimate } from '../document/model';
 import { clampRectToBounds, orientedBoundingRect, toLocal } from '../geometry';
-import { createMask, dilateMask, maskCount } from '../image/filters';
+import { createMask, dilateMask, maskCount, type Mask } from '../image/filters';
+import type { Rect } from '../geometry';
 import { cropRaster, luminance, pasteRaster, type RasterImage } from '../image/raster';
 import { binarizeText, removeRules, selectTextInk } from '../typography/regionAnalysis';
 import { sauvola } from '../vision/binarize';
@@ -29,7 +30,8 @@ export function removeElementText(target: RasterImage, original: RasterImage, es
   const h = est.textBox.height;
   const patch = extractUpright(original, frame);
   const polarity = est.polarity ?? 'dark';
-  const ink = selectTextInk(removeRules(binarizeText(patch, h, polarity), h, est.textBox), est.textBox);
+  const strong = selectTextInk(removeRules(binarizeText(patch, h, polarity), h, est.textBox), est.textBox);
+  const ink = withFaintStrokes(strong, patch, h, polarity, est.textBox);
   const halo = Math.ceil(Math.max(1.5, est.measured.strokeWidth * 0.35 + est.params.blur * 2 + 1));
   const localMask = dilateMask(ink, halo);
 
@@ -85,4 +87,19 @@ export function removeElementText(target: RasterImage, original: RasterImage, es
   const texture = (noise.sigma[0] + noise.sigma[1] + noise.sigma[2]) / 3;
   const confidence = Math.max(0, Math.min(1, cleanRatio * 1.3)) * (texture > 25 ? 0.6 : 1);
   return { pixels, confidence };
+}
+
+/**
+ * Add faint strokes of the same glyphs: hairlines of high-contrast designs
+ * (Song/Ming and Mincho serifs, Didone and Garamond hairlines) are too light
+ * for the text binarisation and would otherwise stay on the page as a ghost
+ * when the text is replaced. Faint ink counts only close to confirmed text
+ * strokes, and never on a ruling line.
+ */
+function withFaintStrokes(strong: Mask, patch: RasterImage, h: number, polarity: 'dark' | 'light', textBox: Rect): Mask {
+  const faint = selectTextInk(removeRules(sauvola(orientForInk(luminance(patch), polarity), { radius: Math.max(8, h), k: 0.12, minContrast: 5 }), h, textBox), textBox);
+  const near = dilateMask(strong, Math.max(2, Math.round(h * 0.25)));
+  const out = createMask(strong.width, strong.height);
+  for (let i = 0; i < out.data.length; i++) out.data[i] = strong.data[i] || (faint.data[i] && near.data[i]) ? 1 : 0;
+  return out;
 }

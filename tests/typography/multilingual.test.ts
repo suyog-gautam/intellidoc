@@ -7,6 +7,7 @@ import type { OcrResult } from '@/core/ocr/types';
 import { analyzeElement } from '@/core/pipeline/analyzeElement';
 import { renderPage } from '@/core/rendering/pageRenderer';
 import { getFont } from '@/core/typography/fontCatalog';
+import { renderCoverage } from '@/core/rendering/textRasterizer';
 import { createNodeRasterizer } from '@/lib/node/nodeRuntime';
 import { defaultParams, drawText, syntheticPaper } from '../helpers/synthetic';
 
@@ -49,7 +50,7 @@ describe('Devanagari (Nepali, Hindi)', () => {
       const est = analyzeElement(paper, element(c.text, box), r, { contextScripts: ['devanagari', 'latin'] })!;
       expect(est).toBeDefined();
       expect(est.params.fontId).toBe(c.fontId);
-      expect(getFont(est.params.fontId).subsets).toContain('devanagari');
+      expect(getFont(est.params.fontId).scripts).toContain('devanagari');
       // Tracking would cut the headline.
       expect(est.params.letterSpacing).toBe(0);
       expect(est.fidelity.silhouetteIoU).toBeGreaterThan(0.7);
@@ -114,16 +115,68 @@ describe('handwriting', () => {
     }
   });
 
-  it('natural variation is deterministic and local to each character', () => {
-    const p = defaultParams({ fontId: 'caveat', fontSize: 40, originX: 20, baselineY: 70, jitter: 0.7 });
-    const a = r.coverage('4250', p, 200, 100).data.slice();
-    const b = r.coverage('4250', p, 200, 100).data.slice();
-    expect(a).toEqual(b);
-    // Changing the last digit leaves the first ones exactly where they were.
-    const c = r.coverage('4258', p, 200, 100).data;
+  it('natural variation is deterministic, and fixed in space so an edit leaves other characters alone', () => {
+    const p = defaultParams({ fontId: 'caveat', fontSize: 40, originX: 20, baselineY: 70, jitter: 0.7, blur: 0 });
+    const anchor = { seed: 42, x: 0, y: 0 };
+    const a = renderCoverage(r, '4250', p, 200, 100, anchor).data;
+    const b = renderCoverage(r, '4250', p, 200, 100, anchor).data;
+    expect(Array.from(a)).toEqual(Array.from(b));
+    const c = renderCoverage(r, '4258', p, 200, 100, anchor).data;
     const firstCell = Math.floor(20 + r.measure('42', p));
     let diff = 0;
-    for (let y = 0; y < 100; y++) for (let x = 0; x < firstCell - 4; x++) diff += Math.abs(a[y * 200 + x] - c[y * 200 + x]);
-    expect(diff).toBe(0);
+    for (let y = 0; y < 100; y++) for (let x = 0; x < firstCell - 6; x++) diff += Math.abs(a[y * 200 + x] - c[y * 200 + x]);
+    expect(diff).toBeLessThan(1e-6);
+  });
+
+  it('never draws the same character twice the same way', () => {
+    // Research-based variation: every instance of "a" gets its own slant, size, shape and pressure.
+    const p = defaultParams({ fontId: 'patrick-hand', fontSize: 60, originX: 10, baselineY: 80, jitter: 0.7, blur: 0 });
+    const cov = renderCoverage(r, 'aaaaa', p, 420, 110, { seed: 7, x: 0, y: 0 });
+    const plain = r.coverage('a', { ...p }, 420, 110);
+    const adv = r.measure('a', p);
+    const cells = [0, 1, 2, 3, 4].map((i) => {
+      const x0 = Math.round(10 + i * adv);
+      const cell = new Float32Array(Math.ceil(adv) * 110);
+      for (let y = 0; y < 110; y++) for (let x = 0; x < Math.ceil(adv); x++) cell[y * Math.ceil(adv) + x] = cov.data[y * 420 + x0 + x] ?? 0;
+      return cell;
+    });
+    let different = 0;
+    for (let i = 1; i < cells.length; i++) {
+      let d = 0;
+      for (let k = 0; k < cells[0].length; k++) d += Math.abs(cells[i][k] - cells[i - 1][k]);
+      if (d > 20) different++;
+    }
+    expect(different).toBe(4);
+    expect(plain.data.some((v) => v > 0)).toBe(true);
+  });
+
+  it("reuses the writer's own characters, choosing varied instances", () => {
+    const paper = syntheticPaper(W, H, 9);
+    const text = 'Paid Rs 4250 on 12/08';
+    const box = drawText(paper, r, text, { cx: W / 2, cy: H / 2, width: 660, height: 120, angle: 0.01 }, defaultParams({ fontId: 'patrick-hand', fontSize: 40, originX: 40, baselineY: 80, jitter: 0.7, color: [30, 40, 120] }), { inkBox: true });
+    const est = analyzeElement(paper, element(text, box), r)!;
+    expect(getFont(est.params.fontId).category).toBe('handwriting');
+    const samples = est.params.glyphSamples!;
+    expect(samples).toBeDefined();
+    // Most characters, including most digits of the amount, were harvested from the scan.
+    expect(['4', '2', '5', '0'].filter((d) => samples[d]?.length).length).toBeGreaterThanOrEqual(3);
+    expect(Object.keys(samples).length).toBeGreaterThanOrEqual(8);
+    // A render that uses them paints the writer's ink, not the font's.
+    const edited = renderPage(paper, page({ ...element(text, box), text: 'Paid Rs 4520 on 12/08', state: 'edited', typography: est }), r);
+    expect(edited.pending).toEqual([]);
+    const withSamples = r.sampleCoverage!('Paid', { ...est.params, originX: 10, baselineY: 60 }, 200, 100);
+    expect(withSamples).toBeDefined();
+    expect(withSamples!.data.some((v) => v > 0.5)).toBe(true);
+  });
+
+  it('does not cut joined handwriting (Devanagari) into letters', () => {
+    const paper = syntheticPaper(W, H, 9);
+    const text = 'कुल रु ४२५०';
+    const box = drawText(paper, r, text, { cx: W / 2, cy: H / 2, width: 660, height: 120, angle: 0 }, defaultParams({ fontId: 'kalam', fontSize: 40, originX: 40, baselineY: 80, jitter: 0.7 }), { inkBox: true });
+    const est = analyzeElement(paper, element(text, box), r, { contextScripts: ['devanagari', 'latin'] })!;
+    expect(est.params.fontId).toBe('kalam');
+    expect(est.params.glyphSamples).toBeUndefined();
+    // Headline scripts: variation calibrated on their own slope (drawn 0.7).
+    expect(Math.abs(est.params.jitter! - 0.7)).toBeLessThan(0.2);
   });
 });

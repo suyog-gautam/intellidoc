@@ -214,7 +214,7 @@ export function PropertiesPanel(p: Props) {
           <div className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="font">Font</Label>
-              <FontPicker id="font" value={o.fontId} detected={detectedFont!} onChange={(fontId) => apply(fontId ? { fontId } : { fontId: undefined, fontSize: undefined, scaleX: undefined, letterSpacing: undefined })} />
+              <FontPicker id="font" value={o.fontId} detected={detectedFont!} text={element.text || element.sourceText} onChange={(fontId) => apply(fontId ? { fontId } : { fontId: undefined, fontSize: undefined, scaleX: undefined, letterSpacing: undefined })} />
               <ToggleGroup
                 type="single"
                 variant="outline"
@@ -250,7 +250,7 @@ export function PropertiesPanel(p: Props) {
                     </ToggleGroupItem>
                   ))}
                 </ToggleGroup>
-                <p className="text-[11px] text-tertiary">Handwriting is never perfectly even: each character gets a slight wobble in position, size and angle.</p>
+                <p className="text-[11px] text-tertiary">Handwriting is never the same twice: every character gets its own baseline, slant, size, shape and pen pressure.</p>
               </div>
             )}
 
@@ -383,16 +383,26 @@ function nearestVariation(j: number): number {
 /** Characters drawn from another font because the scan's design differs (e.g. a "1" without a foot). */
 function GlyphVariants({ params }: { params: RenderParams }) {
   const swaps = Object.entries(params.glyphFonts ?? {}).filter(([, id]) => id !== params.fontId && hasFont(id));
-  if (!swaps.length) return null;
+  const written = Object.keys(params.glyphSamples ?? {}).filter((c) => c.trim());
+  if (!swaps.length && !written.length) return null;
   return (
-    <p className="text-[11.5px] text-muted-foreground">
-      Matched to the scan:{' '}
-      {swaps.map(([ch, id], i) => (
-        <span key={ch}>
-          {i > 0 && ', '}“<span className="font-medium text-foreground">{ch}</span>” from {getFont(id).displayName}
-        </span>
-      ))}
-    </p>
+    <>
+      {written.length > 0 && (
+        <p className="text-[11.5px] text-muted-foreground">
+          Writer’s own handwriting reused for <span className="font-medium text-foreground">{written.join(' ')}</span>. Other characters use the matched hand-style font.
+        </p>
+      )}
+      {swaps.length > 0 && (
+        <p className="text-[11.5px] text-muted-foreground">
+          Matched to the scan:{' '}
+          {swaps.map(([ch, id], i) => (
+            <span key={ch}>
+              {i > 0 && ', '}“<span className="font-medium text-foreground">{ch}</span>” from {getFont(id).displayName}
+            </span>
+          ))}
+        </p>
+      )}
+    </>
   );
 }
 

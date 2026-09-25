@@ -1,9 +1,11 @@
 import type { FidelityMetrics, FontCandidateScore, RenderParams } from '../document/model';
 import { createMask } from '../image/filters';
 import { renderCoverage, type TextRasterizer } from '../rendering/textRasterizer';
-import { hasConnectedScript, type Script } from '../text/script';
-import { candidateFonts, getFont, type CandidateFont } from './fontCatalog';
+import { hasConnectedScript, type CjkRegion, type Script } from '../text/script';
+import { getFont, type CandidateFont } from './fontCatalog';
+import { candidateFonts, fontWeights } from './fontFaces';
 import { baselineWobble, chooseGlyphFonts, jitterFromWobble, variantDonors } from './glyphVariants';
+import { harvestWriterGlyphs } from './writerGlyphs';
 import { measureInk } from './inkMetrics';
 import type { RegionAnalysis } from './regionAnalysis';
 
@@ -31,6 +33,8 @@ export interface FitOptions {
    * script-neutral text such as numbers (see `candidateFonts`).
    */
   contextScripts?: readonly Script[];
+  /** Han glyph conventions of the document's languages (Chinese simplified/traditional, Japanese, Korean). */
+  cjkRegions?: readonly CjkRegion[];
   /** How many coarse winners get the expensive refinement. */
   refineTop?: number;
   /** Max renders per refined candidate. */
@@ -244,13 +248,15 @@ export function luminanceOf([r, g, b]: readonly [number, number, number]): numbe
 
 /** Measure the OCR text rendered at REF_SIZE with a given face. */
 function referenceMetrics(r: TextRasterizer, text: string, fontId: string, weight: number, italic: boolean) {
-  const base = { fontId, weight, italic, fontSize: REF_SIZE, scaleX: 1, letterSpacing: 0, wordSpacing: 0, skewX: 0, embolden: 0, originX: 20, baselineY: 130 };
+  // Room for tall scripts: Nastaliq rises ~2 em above the baseline, Thai and Indic marks stack above and below.
+  const base = { fontId, weight, italic, fontSize: REF_SIZE, scaleX: 1, letterSpacing: 0, wordSpacing: 0, skewX: 0, embolden: 0, originX: 20, baselineY: REF_SIZE * 2.4 };
   const width = Math.ceil(r.measure(text, base) + 60);
-  const cov = r.coverage(text, base, width, 180);
-  const mask = createMask(width, 180);
+  const height = Math.ceil(REF_SIZE * 3.4);
+  const cov = r.coverage(text, base, width, height);
+  const mask = createMask(width, height);
   for (let i = 0; i < cov.data.length; i++) mask.data[i] = cov.data[i] >= 0.5 ? 1 : 0;
   const m = measureInk(mask);
-  return m ? { metrics: m, originX: base.originX } : undefined;
+  return m ? { metrics: m, originX: base.originX, baselineY: base.baselineY } : undefined;
 }
 
 /** Initial parameters for one face, solved from ink measurements. */
@@ -276,7 +282,10 @@ function initialParams(region: RegionAnalysis, r: TextRasterizer, text: string, 
     embolden,
     blur: Math.max(0.4, Math.min(2, o.height * 0.03)),
     originX: o.x0 - (ref.metrics.x0 - ref.originX) * s * scaleX,
-    baselineY: o.baseline,
+    // The ink's measured baseline sits on the font baseline for most scripts, but not all
+    // (Nastaliq words slope ~20% of their height below it): carry a substantial reference
+    // offset over, like originX. Round-glyph overshoot (~1%) is not worth a nudge.
+    baselineY: o.baseline - (Math.abs(ref.metrics.baseline - ref.baselineY) > ref.metrics.height * 0.04 ? (ref.metrics.baseline - ref.baselineY) * s : 0),
     color: [0, 0, 0],
     opacity: 1,
   };
@@ -346,13 +355,13 @@ export function refine(
 export function fitTypography(region: RegionAnalysis, sourceText: string, rasterizer: TextRasterizer, opts: FitOptions = {}): FitResult | undefined {
   const text = sourceText.trim();
   if (!text) return undefined;
-  const fonts = opts.fonts ?? candidateFonts(text, opts.contextScripts);
+  const fonts = opts.fonts ?? candidateFonts(text, { scripts: opts.contextScripts, cjkRegions: opts.cjkRegions });
   const connected = hasConnectedScript(text);
   const evaluator = new CandidateEvaluator(region, text, rasterizer);
 
   const coarse: { params: RenderParams; cost: number }[] = [];
   for (const font of fonts) {
-    for (const weight of font.weights) {
+    for (const weight of fontWeights(font.id)) {
       const p = initialParams(region, rasterizer, text, font, weight, false);
       if (!p) continue;
       const e = evaluator.evaluate(p);
@@ -379,7 +388,12 @@ export function fitTypography(region: RegionAnalysis, sourceText: string, raster
   const ranked = [...refined, ...coarse].map((r) => r.params.fontId);
   const glyphFonts = chooseGlyphFonts(evaluator, rasterizer, best.params, text, variantDonors(ranked, best.params.fontId));
   if (glyphFonts) best.params.glyphFonts = glyphFonts;
-  if (getFont(best.params.fontId).category === 'handwriting') best.params.jitter = jitterFromWobble(baselineWobble(region));
+  if (getFont(best.params.fontId).category === 'handwriting') {
+    best.params.jitter = jitterFromWobble(baselineWobble(region), connected);
+    // The writer's own characters, reused (in varied instances) when the text is edited.
+    const samples = harvestWriterGlyphs(region, best.params, text, rasterizer);
+    if (samples) best.params.glyphSamples = samples;
+  }
 
   const refinedKeys = new Set(refined.map((r) => `${r.params.fontId}/${r.params.weight}`));
   const ranking = [...refined, ...coarse.filter((c) => !refinedKeys.has(`${c.params.fontId}/${c.params.weight}`))];

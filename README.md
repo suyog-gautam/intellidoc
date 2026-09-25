@@ -13,7 +13,7 @@ npm run fixtures   # build a 2-page scanned PDF (synthetic, or from "test files/
 npm run slice -- output/fixtures/scanned-2page.pdf   # benchmark any image/PDF -> output/
 ```
 
-Pick the document language (English, Nepali, Hindi, Marathi and 11 more; up to 3 for bilingual documents), then upload a scanned PDF (multi-page) or a PNG/JPEG/WebP scan. Click a text box, then double-click (or press Enter) to edit it in place. Export the whole document as a PDF, or the current page as PNG or JPEG.
+Leave the document language on Auto-detect (or pick up to 3 of 40 languages: English, Chinese, Hindi, Spanish, Arabic, Bengali, Nepali, Japanese…), then upload a scanned PDF (multi-page) or a PNG/JPEG/WebP scan. Click a text box, then double-click (or press Enter) to edit it in place. Export the whole document as a PDF, or the current page as PNG or JPEG.
 
 Multi-page PDFs open as soon as page 1 is ready; the remaining pages are read in the background.
 
