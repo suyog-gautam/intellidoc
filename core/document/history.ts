@@ -1,4 +1,4 @@
-import { applyHandwritingReadings, type HandwritingGroup, type HandwritingReading } from '../ocr/handwritingPass';
+import { applyHandwritingReadings, type HandwritingGroup, type HandwritingReading } from '../ocr/handwritingReadings';
 import type { Id, IntellidocDocument, Page, RenderParams, TextAlignment, TextElement, TypographyEstimate } from './model';
 
 /**

@@ -1,10 +1,11 @@
 'use client';
 
-import { AlignCenter, AlignLeft, AlignRight, Check, PenLine, ClipboardCopy, ClipboardPaste, Loader2, Pipette, RotateCcw, Trash2, Undo } from 'lucide-react';
+import { AlignCenter, AlignLeft, AlignRight, Check, ChevronDown, PenLine, ClipboardCopy, ClipboardPaste, Loader2, Pipette, RotateCcw, Trash2, Undo } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import type { EditCommand } from '@/core/document/history';
 import { elementIsModified, type RenderParams, type TextAlignment, type TextElement } from '@/core/document/model';
 import { getFont, hasFont } from '@/core/typography/fontCatalog';
+import { scriptsOf } from '@/core/text/script';
 import { glyphStyle } from '@/core/typography/styleTransfer';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -64,15 +65,46 @@ function Section({ title, children, action }: { title: string; children: ReactNo
   );
 }
 
+const MORE_KEY = 'intellidoc.moreOptions';
+
+/** Less-used style controls, collapsed by default so the panel starts simple. The choice is remembered. */
+function MoreOptions({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(() => {
+    try {
+      return localStorage.getItem(MORE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggle = () =>
+    setOpen((o) => {
+      try {
+        localStorage.setItem(MORE_KEY, o ? '0' : '1');
+      } catch {
+        // Storage may be unavailable (private mode); the panel still works.
+      }
+      return !o;
+    });
+  return (
+    <div className="space-y-4">
+      <button type="button" className="flex w-full items-center justify-between text-[13px] font-medium text-muted-foreground hover:text-foreground" aria-expanded={open} onClick={toggle}>
+        More options
+        <ChevronDown className={cn('size-4 transition-transform', open && 'rotate-180')} aria-hidden />
+      </button>
+      {open && children}
+    </div>
+  );
+}
+
 /** Handwriting is misread by the print OCR: offer the handwriting model for doubtful text. */
 function ReadHandwriting({ read }: { read(): Promise<boolean> }) {
   const [state, setState] = useState<'idle' | 'reading' | 'failed'>('idle');
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Button
-        variant="outline"
+        variant="ghost"
         size="sm"
-        className="h-8 rounded-full text-[12.5px]"
+        className="-ml-2 h-8 rounded-full px-2 text-[12.5px] text-brand hover:text-brand"
         disabled={state === 'reading'}
         onClick={async () => {
           setState('reading');
@@ -192,35 +224,15 @@ export function PropertiesPanel(p: Props) {
               <span className="text-[12px] text-tertiary">Fix OCR mistakes here</span>
             </div>
             {element.recognizer === 'handwriting' && <p className="text-[12px] text-muted-foreground">Read by the handwriting model. Please check it.</p>}
-            {/* Offered whatever the confidence: print OCR is often confidently wrong on handwriting. */}
-            {p.onReadHandwriting && element.recognizer !== 'handwriting' && <ReadHandwriting key={element.id} read={p.onReadHandwriting} />}
+            {/* Doubtful text, or text read in another script: print OCR turns handwriting into confident junk such as "के" (92%). */}
+            {p.onReadHandwriting && element.recognizer !== 'handwriting' && (element.ocrConfidence < 85 || [...scriptsOf(element.sourceText)].some((sc) => sc !== 'latin')) && (
+              <ReadHandwriting key={element.id} read={p.onReadHandwriting} />
+            )}
           </div>
         )}
         {added && <p className="text-[12px] text-tertiary">Drag the box on the page to move it, or use the arrow keys.</p>}
       </Section>
 
-      {!added && (
-        <Section title="Alignment">
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            value={element.alignment}
-            onValueChange={(v) => v && run({ type: 'setAlignment', elementId: element.id, alignment: v as TextAlignment })}
-            aria-label="Alignment"
-            className="w-full *:flex-1 *:data-[state=on]:bg-primary *:data-[state=on]:text-primary-foreground"
-          >
-            <ToggleGroupItem value="left" aria-label="Align left">
-              <AlignLeft />
-            </ToggleGroupItem>
-            <ToggleGroupItem value="center" aria-label="Align centre">
-              <AlignCenter />
-            </ToggleGroupItem>
-            <ToggleGroupItem value="right" aria-label="Align right">
-              <AlignRight />
-            </ToggleGroupItem>
-          </ToggleGroup>
-        </Section>
-      )}
 
       <Separator />
 
@@ -262,122 +274,147 @@ export function PropertiesPanel(p: Props) {
                   Bold
                 </ToggleGroupItem>
               </ToggleGroup>
-              <GlyphVariants params={effective!} />
             </div>
 
-            {getFont(effective!.fontId).category === 'handwriting' && (
-              <div className="space-y-1.5">
-                <Label id="variation-label">Natural variation</Label>
-                <ToggleGroup
-                  type="single"
-                  variant="outline"
-                  size="sm"
-                  value={String(nearestVariation(effective!.jitter ?? 0))}
-                  onValueChange={(v) => v && apply({ jitter: Number(v) })}
-                  aria-labelledby="variation-label"
-                  className="w-full *:flex-1 *:data-[state=on]:bg-primary *:data-[state=on]:text-primary-foreground"
-                >
-                  {VARIATIONS.map((v) => (
-                    <ToggleGroupItem key={v.value} value={String(v.value)}>
-                      {v.label}
-                    </ToggleGroupItem>
-                  ))}
-                </ToggleGroup>
-                <p className="text-[11px] text-tertiary">Handwriting is never the same twice: every character gets its own baseline, slant, size, shape and pen pressure.</p>
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="size">Size (px)</Label>
-                <Input
-                  id="size"
-                  type="number"
-                  inputMode="decimal"
-                  min={4}
-                  max={400}
-                  step={0.5}
-                  className={cn(inputClass, 'type-num')}
-                  placeholder={t.params.fontSize.toFixed(1)}
-                  value={size}
-                  onChange={(e) => setSize(e.target.value)}
-                  onBlur={commitSize}
-                  onKeyDown={(e) => e.key === 'Enter' && commitSize()}
-                  aria-describedby="size-hint"
-                />
-                <p id="size-hint" className="text-[11px] text-tertiary">
-                  Empty = auto
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="ink">Ink colour</Label>
-                <div className="flex h-10 items-center gap-2 rounded-md bg-canvas px-2">
-                  <input
-                    id="ink"
-                    type="color"
-                    className="size-7 cursor-pointer rounded-sm border border-border-mid bg-transparent p-0"
-                    value={inkDraft ?? toHex(effective!.color)}
-                    onChange={(e) => setInkDraft(e.target.value)}
-                  />
-                  <span className="type-num min-w-0 truncate text-[12px] text-muted-foreground">{o.color ? toHex(o.color) : 'Auto'}</span>
+            <MoreOptions>
+              {!added && (
+                <div className="space-y-1.5">
+                  <Label>Alignment</Label>
+                  <ToggleGroup
+                type="single"
+                variant="outline"
+                value={element.alignment}
+                onValueChange={(v) => v && run({ type: 'setAlignment', elementId: element.id, alignment: v as TextAlignment })}
+                aria-label="Alignment"
+                className="w-full *:flex-1 *:data-[state=on]:bg-primary *:data-[state=on]:text-primary-foreground"
+              >
+                <ToggleGroupItem value="left" aria-label="Align left">
+                  <AlignLeft />
+                </ToggleGroupItem>
+                <ToggleGroupItem value="center" aria-label="Align centre">
+                  <AlignCenter />
+                </ToggleGroupItem>
+                <ToggleGroupItem value="right" aria-label="Align right">
+                  <AlignRight />
+                </ToggleGroupItem>
+              </ToggleGroup>
                 </div>
-                {o.color ? (
-                  <button type="button" className="text-[11px] font-medium text-brand hover:underline" onClick={() => apply({ color: undefined })}>
-                    Use detected colour
-                  </button>
-                ) : (
-                  <p className="text-[11px] text-tertiary">Detected from the scan</p>
+              )}
+              <GlyphVariants params={effective!} />
+              {getFont(effective!.fontId).category === 'handwriting' && (
+                <div className="space-y-1.5">
+                  <Label id="variation-label">Natural variation</Label>
+                  <ToggleGroup
+                    type="single"
+                    variant="outline"
+                    size="sm"
+                    value={String(nearestVariation(effective!.jitter ?? 0))}
+                    onValueChange={(v) => v && apply({ jitter: Number(v) })}
+                    aria-labelledby="variation-label"
+                    className="w-full *:flex-1 *:data-[state=on]:bg-primary *:data-[state=on]:text-primary-foreground"
+                  >
+                    {VARIATIONS.map((v) => (
+                      <ToggleGroupItem key={v.value} value={String(v.value)}>
+                        {v.label}
+                      </ToggleGroupItem>
+                    ))}
+                  </ToggleGroup>
+                  <p className="text-[11px] text-tertiary">Handwriting is never the same twice: every character gets its own baseline, slant, size, shape and pen pressure.</p>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="size">Size (px)</Label>
+                  <Input
+                    id="size"
+                    type="number"
+                    inputMode="decimal"
+                    min={4}
+                    max={400}
+                    step={0.5}
+                    className={cn(inputClass, 'type-num')}
+                    placeholder={t.params.fontSize.toFixed(1)}
+                    value={size}
+                    onChange={(e) => setSize(e.target.value)}
+                    onBlur={commitSize}
+                    onKeyDown={(e) => e.key === 'Enter' && commitSize()}
+                    aria-describedby="size-hint"
+                  />
+                  <p id="size-hint" className="text-[11px] text-tertiary">
+                    Empty = auto
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="ink">Ink colour</Label>
+                  <div className="flex h-10 items-center gap-2 rounded-md bg-canvas px-2">
+                    <input
+                      id="ink"
+                      type="color"
+                      className="size-7 cursor-pointer rounded-sm border border-border-mid bg-transparent p-0"
+                      value={inkDraft ?? toHex(effective!.color)}
+                      onChange={(e) => setInkDraft(e.target.value)}
+                    />
+                    <span className="type-num min-w-0 truncate text-[12px] text-muted-foreground">{o.color ? toHex(o.color) : 'Auto'}</span>
+                  </div>
+                  {o.color ? (
+                    <button type="button" className="text-[11px] font-medium text-brand hover:underline" onClick={() => apply({ color: undefined })}>
+                      Use detected colour
+                    </button>
+                  ) : (
+                    <p className="text-[11px] text-tertiary">Detected from the scan</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Copy style from other text</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  <Button variant="outline" className="h-9 rounded-lg px-2 text-[12.5px]" onClick={p.onCopyStyle}>
+                    <ClipboardCopy /> Copy
+                  </Button>
+                  <Button variant="outline" className="h-9 rounded-lg px-2 text-[12.5px]" onClick={p.onPasteStyle} disabled={!p.copiedStyle || p.copiedStyle.sourceId === element.id}>
+                    <ClipboardPaste /> Paste
+                  </Button>
+                  <Button variant={p.picking ? 'default' : 'outline'} className="h-9 rounded-lg px-2 text-[12.5px]" onClick={p.onPickStyle} aria-pressed={p.picking}>
+                    <Pipette /> Match
+                  </Button>
+                </div>
+                <p className="text-[11px] text-tertiary">
+                  {p.picking
+                    ? 'Click any recognised text, on any page, to use its style.'
+                    : p.copiedStyle
+                      ? `Copied: ${p.copiedStyle.label}`
+                      : 'Match takes the style of any text you click; Copy/Paste works across pages.'}
+                </p>
+                {p.styleSourceText && (
+                  <p className="text-[12px] text-muted-foreground">
+                    Style from <span className="font-medium text-foreground">“{p.styleSourceText}”</span>
+                  </p>
                 )}
               </div>
-            </div>
 
-            <div className="space-y-2">
-              <Label>Copy style from other text</Label>
-              <div className="grid grid-cols-3 gap-2">
-                <Button variant="outline" className="h-9 rounded-lg px-2 text-[12.5px]" onClick={p.onCopyStyle}>
-                  <ClipboardCopy /> Copy
-                </Button>
-                <Button variant="outline" className="h-9 rounded-lg px-2 text-[12.5px]" onClick={p.onPasteStyle} disabled={!p.copiedStyle || p.copiedStyle.sourceId === element.id}>
-                  <ClipboardPaste /> Paste
-                </Button>
-                <Button variant={p.picking ? 'default' : 'outline'} className="h-9 rounded-lg px-2 text-[12.5px]" onClick={p.onPickStyle} aria-pressed={p.picking}>
-                  <Pipette /> Match
-                </Button>
-              </div>
-              <p className="text-[11px] text-tertiary">
-                {p.picking
-                  ? 'Click any recognised text, on any page, to use its style.'
-                  : p.copiedStyle
-                    ? `Copied: ${p.copiedStyle.label}`
-                    : 'Match takes the style of any text you click; Copy/Paste works across pages.'}
-              </p>
-              {p.styleSourceText && (
-                <p className="text-[12px] text-muted-foreground">
-                  Style from <span className="font-medium text-foreground">“{p.styleSourceText}”</span>
-                </p>
-              )}
-            </div>
-
-            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 border-t border-border pt-3 text-[13px]">
-              <dt className="text-muted-foreground">Detected</dt>
-              <dd>
-                {detectedFont!.displayName} {t.params.weight >= 700 ? 'Bold' : 'Regular'}
-                <span className="block text-[12px] text-tertiary">looks like {detectedFont!.resembles.join(' / ')} · estimate</span>
-              </dd>
-              <dt className="text-muted-foreground">Width</dt>
-              <dd className="type-num">{pct(t.params.scaleX)}</dd>
-              <dt className="text-muted-foreground">Rotation</dt>
-              <dd className="type-num">{((t.frame.angle * 180) / Math.PI).toFixed(2)}°</dd>
-              {!added && (
-                <>
-                  <dt className="text-muted-foreground">Visual match</dt>
-                  <dd>
-                    <span className="type-num">{pct(t.fidelity.silhouetteIoU)}</span>
-                    <span className="ml-1.5 text-[12px] text-tertiary">shape overlap</span>
-                  </dd>
-                </>
-              )}
-            </dl>
+              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 border-t border-border pt-3 text-[13px]">
+                <dt className="text-muted-foreground">Detected</dt>
+                <dd>
+                  {detectedFont!.displayName} {t.params.weight >= 700 ? 'Bold' : 'Regular'}
+                  <span className="block text-[12px] text-tertiary">looks like {detectedFont!.resembles.join(' / ')} · estimate</span>
+                </dd>
+                <dt className="text-muted-foreground">Width</dt>
+                <dd className="type-num">{pct(t.params.scaleX)}</dd>
+                <dt className="text-muted-foreground">Rotation</dt>
+                <dd className="type-num">{((t.frame.angle * 180) / Math.PI).toFixed(2)}°</dd>
+                {!added && (
+                  <>
+                    <dt className="text-muted-foreground">Visual match</dt>
+                    <dd>
+                      <span className="type-num">{pct(t.fidelity.silhouetteIoU)}</span>
+                      <span className="ml-1.5 text-[12px] text-tertiary">shape overlap</span>
+                    </dd>
+                  </>
+                )}
+              </dl>
+            </MoreOptions>
           </div>
         )}
       </Section>

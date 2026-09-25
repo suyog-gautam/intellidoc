@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createHistory, execute, replacePresent } from '@/core/document/history';
-import { acceptReading, applyHandwritingReadings, plausibleReading } from '@/core/ocr/handwritingPass';
+import { acceptReading, applyHandwritingReadings, plausibleReading } from '@/core/ocr/handwritingReadings';
 import { buildDocument } from '@/core/pipeline/buildDocument';
 import type { OcrWord } from '@/core/ocr/types';
 import { detokenize } from '@/lib/ocr/trocr';

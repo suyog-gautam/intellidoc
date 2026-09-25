@@ -19,7 +19,8 @@ original file ──► validate ──► PageSource (image | pdf.js) ──►
 |---|---|---|
 | `core/document` | Model types, pure edit commands, history | – (source of truth) |
 | `core/ocr` | `OcrEngine` interface; `TesseractEngine` adapter (incl. OSD script detection); 40-language catalogue; Auto language choice (`detectLanguages.ts`) | Any browser OCR engine |
-| `core/ocr/handwritingPass.ts` | Finds handwritten lines from the ink (not OCR boxes), prepares ink-only crops, filters and applies handwriting readings (`readHandwriting` command) | – |
+| `core/ocr/handwritingPass.ts` | Finds handwritten lines from the ink (not OCR boxes) and prepares ink-only crops (worker only) | – |
+| `core/ocr/handwritingReadings.ts` | Which handwriting readings are credible and how they replace OCR fragments (`readHandwriting` command); no image code, so the editor bundle stays small | – |
 | `lib/ocr/trocr.ts`, `workers/handwriting.worker.ts` | TrOCR handwriting line recogniser on ONNX Runtime Web (WASM), with digit-constrained second decoding; model vendored same-origin | Any line recogniser (per-script models) |
 | `core/ocr/recovery.ts` | Second OCR pass: re-reads low-confidence words and finds text the page pass missed (e.g. values in table cells) as clean single-line crops; merges only credible improvements | – |
 | `core/layout` | Pixel-measured word styles (tight boxes, stroke weight, ink colour, glyph height); word → line → run grouping; style-aware run splitting; noise filtering; reading order | ML layout model |

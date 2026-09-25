@@ -14,7 +14,7 @@ import { vendorUrl } from '@/lib/browser/paths';
 import { deviceBudgets } from '@/lib/browser/deviceProfile';
 import type { ReconstructionClient } from '@/lib/workers/reconstructionClient';
 import { handwritingAvailable, HandwritingClient } from '@/lib/workers/handwritingClient';
-import type { HandwritingReading } from '@/core/ocr/handwritingPass';
+import type { HandwritingReading } from '@/core/ocr/handwritingReadings';
 import type { Rect } from '@/core/geometry';
 
 /** Background work the editor shows while it stays usable. */

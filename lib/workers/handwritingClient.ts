@@ -1,5 +1,5 @@
 import type { RasterImage } from '@/core/image/raster';
-import type { HandwritingReading } from '@/core/ocr/handwritingPass';
+import type { HandwritingReading } from '@/core/ocr/handwritingReadings';
 import { vendorUrl } from '@/lib/browser/paths';
 import type { HandwritingRequest, HandwritingResponse } from '@/workers/handwriting.worker';
 

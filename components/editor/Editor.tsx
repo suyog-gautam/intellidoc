@@ -9,7 +9,7 @@ import type { Point } from '@/core/geometry';
 import { canExportPdf, exportPageImage, exportPdf } from '@/lib/browser/exportDocument';
 import type { DocumentSession, SessionActivity } from '@/lib/session/documentSession';
 import { getOcrLanguage } from '@/core/ocr/languages';
-import { plausibleReading } from '@/core/ocr/handwritingPass';
+import { plausibleReading } from '@/core/ocr/handwritingReadings';
 
 import type { ReconstructionClient } from '@/lib/workers/reconstructionClient';
 import { AppHeader } from '../AppHeader';
