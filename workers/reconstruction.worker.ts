@@ -11,16 +11,20 @@ import { CanvasTextRasterizer, type CanvasLike } from '@/core/rendering/textRast
 import { pageContentFromOcr } from '@/core/pipeline/buildDocument';
 import { cropForLineOcr, findRecoveryRegions } from '@/core/ocr/recovery';
 import { estimatePageSkew, estimateTextHeight, grayToRaster, normalizeIllumination, prepareOcrImage } from '@/core/vision/preprocess';
-import { loadCandidateFonts } from '@/lib/browser/fonts';
+import { scriptsOfLanguages } from '@/core/ocr/languages';
+import { subsetsOfScript } from '@/core/text/script';
+import type { Page } from '@/core/document/model';
+import { loadCandidateFonts, loadFontsForText } from '@/lib/browser/fonts';
 import { PageStore } from './pageStore';
 import type { WorkerRequest, WorkerResponse } from './protocol';
 
 declare const self: DedicatedWorkerGlobalScope & { fonts: FontFaceSet };
 
-// Candidate fonts (~300 KB) are only needed once text is analysed or
-// rendered, not for OCR, so load them on first use.
-let fontsPromise: Promise<void> | undefined;
-const fontsReady = () => (fontsPromise ??= loadCandidateFonts(self.fonts));
+// Candidate fonts are only needed once text is analysed or rendered, not for
+// OCR, so they load on first use: Latin faces first, other subsets
+// (Devanagari, Cyrillic, ...) only when the text at hand needs them.
+const fontsForTexts = (texts: Iterable<string>) => loadFontsForText(self.fonts, texts);
+const pageTexts = (page: Page) => page.textElements.flatMap((e) => (e.state === 'original' ? [] : [e.text, e.sourceText]));
 const rasterizer = new CanvasTextRasterizer((w, h) => {
   const canvas = new OffscreenCanvas(w, h);
   return {
@@ -95,13 +99,15 @@ async function handle(req: WorkerRequest): Promise<void> {
       return;
     }
     case 'analyze': {
-      await fontsReady();
-      const est = analyzeElement(await store.get(req.pageKey), req.element, rasterizer);
+      const contextScripts = scriptsOfLanguages(req.languages ?? []);
+      // Candidates for numbers in, say, a Nepali document include Devanagari families.
+      await Promise.all([fontsForTexts([req.element.sourceText, req.element.text]), loadCandidateFonts(self.fonts, contextScripts.filter((c) => c !== 'latin').flatMap(subsetsOfScript))]);
+      const est = analyzeElement(await store.get(req.pageKey), req.element, rasterizer, { contextScripts });
       post({ type: 'analyzed', id: req.id, typography: est && clipSlotToNeighbours(est, req.page, req.element) });
       return;
     }
     case 'render': {
-      await fontsReady();
+      await fontsForTexts(pageTexts(req.page));
       const result = renderPage(await store.get(req.pageKey), req.page, rasterizer);
       postRaster(req.id, result.image, result.pending, result.overflowing);
       return;
@@ -124,7 +130,7 @@ async function handle(req: WorkerRequest): Promise<void> {
       postRaster(req.id, cloneRaster(await store.get(req.pageKey)));
       return;
     case 'encodePage': {
-      await fontsReady();
+      await fontsForTexts(pageTexts(req.page));
       const result = renderPage(await store.get(req.pageKey), req.page, rasterizer);
       post({ type: 'encoded', id: req.id, blob: await encode(result.image, req.mimeType, req.quality) });
       return;

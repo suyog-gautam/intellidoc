@@ -29,7 +29,7 @@ export function removeElementText(target: RasterImage, original: RasterImage, es
   const h = est.textBox.height;
   const patch = extractUpright(original, frame);
   const polarity = est.polarity ?? 'dark';
-  const ink = selectTextInk(removeRules(binarizeText(patch, h, polarity), h), est.textBox);
+  const ink = selectTextInk(removeRules(binarizeText(patch, h, polarity), h, est.textBox), est.textBox);
   const halo = Math.ceil(Math.max(1.5, est.measured.strokeWidth * 0.35 + est.params.blur * 2 + 1));
   const localMask = dilateMask(ink, halo);
 

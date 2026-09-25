@@ -12,6 +12,7 @@ const GROUPS: { category: FontCategory; label: string }[] = [
   { category: 'serif', label: 'Serif' },
   { category: 'condensed', label: 'Condensed' },
   { category: 'mono', label: 'Monospace' },
+  { category: 'handwriting', label: 'Handwriting' },
 ];
 
 let previewFonts: Promise<void> | undefined;

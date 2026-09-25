@@ -127,7 +127,7 @@ export function useEditor(client: ReconstructionClient, session: DocumentSession
       const job = (async () => {
         setAnalyzing((s) => new Set(s).add(el.id));
         try {
-          const typography = await client.analyze(onPage.sourceRef, onPage, el);
+          const typography = await client.analyze(onPage.sourceRef, onPage, el, session.languages);
           if (!typography) setError(`Could not analyse the style of “${el.sourceText}”. It will not be re-rendered.`);
           setHistory((h) => {
             // Only apply if the source text wasn't corrected meanwhile.
@@ -151,7 +151,7 @@ export function useEditor(client: ReconstructionClient, session: DocumentSession
       inFlight.current.set(el.id, job);
       return job;
     },
-    [client],
+    [client, session.languages],
   );
 
   // Analyse the selection eagerly, and any modified element missing typography.

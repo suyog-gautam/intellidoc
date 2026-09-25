@@ -37,10 +37,16 @@ copy(path.join(nm, 'tesseract.js', 'dist', 'worker.min.js'), path.join(out, 'tes
 // tesseract.js picks plain / SIMD / relaxed-SIMD at runtime, so all three ship.
 fs.rmSync(path.join(out, 'tesseract', 'core'), { recursive: true, force: true });
 copyMatching(path.join(nm, 'tesseract.js-core'), /^tesseract-core(-simd|-relaxedsimd)?-lstm\.wasm\.js$/, path.join(out, 'tesseract', 'core'));
-copy(
-  path.join(nm, '@tesseract.js-data', 'eng', '4.0.0_best_int', 'eng.traineddata.gz'),
-  path.join(out, 'tesseract', 'lang', 'eng.traineddata.gz'),
-);
+// OCR language models: every language of the catalogue (core/ocr/languages.ts).
+// The browser downloads only the ones the user picks, once, then caches them.
+const languageSource = fs.readFileSync(path.join(root, 'core', 'ocr', 'languages.ts'), 'utf8');
+const OCR_LANGUAGE_CODES = [...languageSource.matchAll(/\{ code: '([a-z_]+)'/g)].map((m) => m[1]);
+for (const code of OCR_LANGUAGE_CODES) {
+  copy(
+    path.join(nm, '@tesseract.js-data', code, '4.0.0_best_int', `${code}.traineddata.gz`),
+    path.join(out, 'tesseract', 'lang', `${code}.traineddata.gz`),
+  );
+}
 
 // pdf.js worker plus the resources it fetches at runtime (CMaps for CJK text,
 // standard fonts, WASM image decoders for JPX/JBIG2 scans, ICC profiles).
@@ -54,11 +60,14 @@ for (const dir of ['cmaps', 'standard_fonts', 'wasm', 'iccs']) {
 const fontsDir = path.join(nm, '@fontsource');
 let fonts = 0;
 // Only the document-matching candidates. The package list is read from the
-// font catalog (single source of truth); UI fonts are bundled by next/font.
+// font catalog (single source of truth: `font('<pkg>', ...)` entries); UI
+// fonts are bundled by next/font. Every shipped subset is copied; the app
+// downloads a subset only when a document contains such text.
 const catalogSource = fs.readFileSync(path.join(root, 'core', 'typography', 'fontCatalog.ts'), 'utf8');
-const CANDIDATE_PACKAGES = [...new Set([...catalogSource.matchAll(/faces\('([a-z0-9-]+)'\)/g)].map((m) => m[1]))];
+const CANDIDATE_PACKAGES = [...new Set([...catalogSource.matchAll(/^\s*font\('([a-z0-9-]+)'/gm)].map((m) => m[1]))];
+fs.rmSync(path.join(out, 'fonts'), { recursive: true, force: true });
 for (const pkg of CANDIDATE_PACKAGES) {
-  fonts += copyMatching(path.join(fontsDir, pkg, 'files'), /-latin-(400|700)-normal\.woff2$/, path.join(out, 'fonts'));
+  fonts += copyMatching(path.join(fontsDir, pkg, 'files'), /-(latin|latin-ext|cyrillic|greek|devanagari)-(400|700)-normal\.woff2$/, path.join(out, 'fonts'));
 }
 
-console.log(`[intellidoc] vendor assets copied (${fonts} font files)`);
+console.log(`[intellidoc] vendor assets copied (${fonts} font files, ${OCR_LANGUAGE_CODES.length} OCR languages)`);

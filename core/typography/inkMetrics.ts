@@ -35,7 +35,11 @@ export function measureInk(mask: Mask): InkMetrics | undefined {
   const heights = glyphs.map((c) => c.y1 - c.y0);
   const refH = percentile(heights, 90);
   const baselineSet = glyphs.filter((c) => c.y1 - c.y0 >= refH * 0.4);
-  const capSet = glyphs.filter((c) => c.y1 - c.y0 >= refH * 0.75);
+  // Capitals, digits and ascenders only. x-height letters reach ~0.78 of the
+  // cap height in large-x-height fonts once blur is added (Arial 0.72,
+  // Montserrat/Verdana ~0.75); a 0.75 cut let them in, halved the measured
+  // size and made "Invoice 23465"-type lines fit the wrong font (12 of 22).
+  const capSet = glyphs.filter((c) => c.y1 - c.y0 >= refH * 0.85);
   const baseline = median(baselineSet.map((c) => c.y1));
   const capTop = median(capSet.map((c) => c.y0));
   const x0 = Math.min(...glyphs.map((c) => c.x0));

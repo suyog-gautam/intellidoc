@@ -115,7 +115,7 @@ export interface TextElement {
   styleOverrides?: Partial<RenderParams>;
 }
 
-export type FontCategory = 'sans' | 'serif' | 'mono' | 'condensed';
+export type FontCategory = 'sans' | 'serif' | 'mono' | 'condensed' | 'handwriting';
 
 /**
  * Parameters that fully determine how text is rasterised. Coordinates are in
@@ -147,6 +147,20 @@ export interface RenderParams {
   color: [number, number, number];
   /** 0..1 multiplier on coverage. */
   opacity: number;
+  /**
+   * Glyph variants: character (cluster) → candidate font that draws it,
+   * scaled to this font's size of that character and centred in its advance
+   * (layout is unchanged). Fonts disagree on details such as a foot under
+   * "1" or a two-storey "g"; the fitter picks, per character, the variant
+   * the scan shows. A value equal to `fontId` means "the font's own glyph".
+   */
+  glyphFonts?: Record<string, string>;
+  /**
+   * Natural variation 0..1 for handwriting: small per-character baseline,
+   * size and angle wobble (deterministic per text), so replacements don't
+   * look typeset. 0 or absent for print.
+   */
+  jitter?: number;
 }
 
 export interface FidelityMetrics {

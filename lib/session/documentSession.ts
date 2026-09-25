@@ -1,6 +1,7 @@
 import type { EditCommand } from '@/core/document/history';
 import type { IntellidocDocument, Page } from '@/core/document/model';
 import type { RasterImage } from '@/core/image/raster';
+import { normalizeLanguages } from '@/core/ocr/languages';
 import { TesseractEngine } from '@/core/ocr/tesseractEngine';
 import { mergeRecovered } from '@/core/ocr/recovery';
 import { OcrError, scaleOcrResult, type OcrEngine, type OcrResult } from '@/core/ocr/types';
@@ -19,16 +20,24 @@ export interface OpenProgress {
   pageCount?: number;
 }
 
-let sharedOcr: OcrEngine | undefined;
+let sharedOcr: { key: string; engine: OcrEngine } | undefined;
 
-function ocrEngine(): OcrEngine {
-  sharedOcr ??= new TesseractEngine({
-    workerPath: vendorUrl('tesseract/worker.min.js'),
-    corePath: vendorUrl('tesseract/core'),
-    langPath: vendorUrl('tesseract/lang'),
-    languages: ['eng'],
-  });
-  return sharedOcr;
+/** One Tesseract worker, re-created when the document languages change. */
+function ocrEngine(languages: readonly string[]): OcrEngine {
+  const key = languages.join('+');
+  if (sharedOcr?.key !== key) {
+    void sharedOcr?.engine.dispose();
+    sharedOcr = {
+      key,
+      engine: new TesseractEngine({
+        workerPath: vendorUrl('tesseract/worker.min.js'),
+        corePath: vendorUrl('tesseract/core'),
+        langPath: vendorUrl('tesseract/lang'),
+        languages: [...languages],
+      }),
+    };
+  }
+  return sharedOcr.engine;
 }
 
 async function decodeImage(blob: Blob): Promise<RasterImage> {
@@ -87,9 +96,12 @@ export class DocumentSession {
     readonly initial: IntellidocDocument,
     private readonly source: PageSource,
     private readonly client: ReconstructionClient,
+    /** Tesseract language codes, e.g. ['nep', 'eng']. */
+    readonly languages: readonly string[],
   ) {}
 
-  static async open(file: File, client: ReconstructionClient, onProgress: (p: OpenProgress) => void): Promise<DocumentSession> {
+  static async open(file: File, client: ReconstructionClient, onProgress: (p: OpenProgress) => void, languageCodes: Iterable<string> = ['eng']): Promise<DocumentSession> {
+    const languages = normalizeLanguages(languageCodes);
     onProgress({ stage: 'validating' });
     const format = await validateUpload(file);
     const bytes = new Uint8Array(await file.arrayBuffer());
@@ -105,9 +117,9 @@ export class DocumentSession {
       { fileName: file.name.slice(0, 200), mimeType: format, byteSize: file.size, sha256, kind: source.kind, pageCount: source.pageCount + source.skippedPages },
       skeleton,
       'tesseract.js',
-      ['eng'],
+      languages,
     );
-    const session = new DocumentSession(doc, source, client);
+    const session = new DocumentSession(doc, source, client, languages);
     if (source.skippedPages > 0) session.warnings.push(`Only the first ${source.pageCount} pages were loaded (${source.skippedPages} more in the file).`);
 
     try {
@@ -150,7 +162,7 @@ export class DocumentSession {
     const { ocrImage, skew, ocrScale } = await this.client.preprocess(page.sourceRef);
 
     onProgress({ stage: 'ocr', progress: 0 });
-    const ocr = await ocrEngine().recognize({ kind: 'blob', blob: ocrImage }, (p) =>
+    const ocr = await ocrEngine(this.languages).recognize({ kind: 'blob', blob: ocrImage }, (p) =>
       onProgress({ stage: 'ocr', progress: p.stage === 'recognizing text' ? p.progress : undefined }),
     );
     // Second look at doubtful words and text the page pass missed (e.g. values in table cells).
@@ -166,7 +178,7 @@ export class DocumentSession {
     try {
       const crops = await this.client.recoveryCrops(pageKey, ocr);
       const results: (OcrResult | undefined)[] = [];
-      for (const crop of crops) results.push(await ocrEngine().recognizeLine({ kind: 'blob', blob: crop.image }).catch(() => undefined));
+      for (const crop of crops) results.push(await ocrEngine(this.languages).recognizeLine({ kind: 'blob', blob: crop.image }).catch(() => undefined));
       return mergeRecovered(
         ocr,
         crops.map((c) => c.meta),

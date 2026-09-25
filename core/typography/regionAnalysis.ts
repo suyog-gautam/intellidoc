@@ -46,14 +46,51 @@ export function binarizeText(patch: RasterImage, textHeight: number, polarity: T
   return sauvola(orientForInk(luminance(patch), polarity), { radius: Math.max(8, textHeight), k: 0.25, minContrast: 14 });
 }
 
-export function removeRules(ink: Mask, textHeight: number): Mask {
+export function removeRules(ink: Mask, textHeight: number, textBox?: Rect): Mask {
   // Solid rules touching glyphs. Dashed rule fragments are handled by the
   // band filter in selectTextInk (bridging big gaps here would also bridge
   // the gaps between characters and eat text).
   const rules = detectRules(ink, Math.max(40, Math.round(textHeight * 2.5)));
+  if (textBox) keepHeadlines(rules, ink, textBox, textHeight);
   const out = createMask(ink.width, ink.height);
   for (let i = 0; i < ink.data.length; i++) out.data[i] = ink.data[i] && !rules.data[i] ? 1 : 0;
   return out;
+}
+
+/**
+ * Headline strokes are text, not rules. Devanagari (and Bengali, Gurmukhi)
+ * words hang their letters from a continuous headline (shirorekha) that is
+ * as long as the word, so it passes as a horizontal rule. Treating it as one
+ * would leave the old headline on the page when the text is replaced.
+ *
+ * A headline lies in the upper half of the text box, doesn't extend past the
+ * text, and has glyph stems hanging from it along much of its length. A
+ * table rule or form line either runs beyond the text or has, at most, a few
+ * glyphs touching it. The test is geometric, so it needs no language hint.
+ */
+function keepHeadlines(rules: Mask, ink: Mask, box: Rect, h: number): void {
+  const { width: w, height: hh } = rules;
+  const { labels, components } = labelComponents(rules);
+  const slack = h * 0.6;
+  for (const c of components) {
+    const thin = c.y1 - c.y0 <= Math.max(3, h * 0.3);
+    const inside = c.x0 >= box.x - slack && c.x1 <= box.x + box.width + slack;
+    const upper = c.y0 >= box.y - h * 0.35 && c.y1 <= box.y + box.height * 0.6;
+    if (!thin || !inside || !upper) continue;
+    // Columns with ink just below the stroke: the stems hanging from a headline.
+    const probe = Math.max(2, Math.round(h * 0.12));
+    let hanging = 0;
+    for (let x = c.x0; x < c.x1; x++) {
+      for (let y = c.y1; y < Math.min(hh, c.y1 + probe); y++) {
+        if (ink.data[y * w + x] && !rules.data[y * w + x]) {
+          hanging++;
+          break;
+        }
+      }
+    }
+    if (hanging < (c.x1 - c.x0) * 0.2) continue;
+    for (let y = c.y0; y < c.y1; y++) for (let x = c.x0; x < c.x1; x++) if (labels[y * w + x] === c.label) rules.data[y * w + x] = 0;
+  }
 }
 
 /**
@@ -109,7 +146,7 @@ export function analyzeRegion(page: RasterImage, box: OrientedBox): RegionAnalys
   // White headings on coloured banners etc.: every ink step below must look
   // for *lighter* strokes, and the background is the dark surface.
   const polarity = detectTextPolarity(luminance(patch), textBox);
-  let ink = removeRules(binarizeText(patch, h, polarity), h);
+  let ink = removeRules(binarizeText(patch, h, polarity), h, textBox);
 
   // Refine rotation locally: the page skew is only an average, and phone
   // captures bend and tilt differently across the page.
@@ -118,7 +155,7 @@ export function analyzeRegion(page: RasterImage, box: OrientedBox): RegionAnalys
     if (Math.abs(skew.angle) > (0.1 * Math.PI) / 180) {
       frame = { ...frame, angle: frame.angle + skew.angle };
       patch = extractUpright(page, frame);
-      ink = removeRules(binarizeText(patch, h, polarity), h);
+      ink = removeRules(binarizeText(patch, h, polarity), h, textBox);
     }
   }
 

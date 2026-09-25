@@ -1,7 +1,9 @@
 import type { FidelityMetrics, FontCandidateScore, RenderParams } from '../document/model';
 import { createMask } from '../image/filters';
 import { renderCoverage, type TextRasterizer } from '../rendering/textRasterizer';
-import { FONT_CATALOG, type CandidateFont } from './fontCatalog';
+import { hasConnectedScript, type Script } from '../text/script';
+import { candidateFonts, getFont, type CandidateFont } from './fontCatalog';
+import { baselineWobble, chooseGlyphFonts, jitterFromWobble, variantDonors } from './glyphVariants';
 import { measureInk } from './inkMetrics';
 import type { RegionAnalysis } from './regionAnalysis';
 
@@ -15,6 +17,8 @@ import type { RegionAnalysis } from './regionAnalysis';
  *      solved in closed form, and score the photometric error.
  *   3. Refine the best candidates with coordinate descent over size, scale,
  *      position, spacing, weight, slant and optical blur.
+ *   4. Pick glyph variants per character (see glyphVariants.ts) and, for
+ *      handwriting, the natural variation measured from the baseline.
  *
  * The result is the rendering that *looks* most like the original, which is
  * what matters, rather than a claim about the font's name.
@@ -22,6 +26,11 @@ import type { RegionAnalysis } from './regionAnalysis';
 
 export interface FitOptions {
   fonts?: readonly CandidateFont[];
+  /**
+   * Scripts of the document's OCR languages. Widens the candidates for
+   * script-neutral text such as numbers (see `candidateFonts`).
+   */
+  contextScripts?: readonly Script[];
   /** How many coarse winners get the expensive refinement. */
   refineTop?: number;
   /** Max renders per refined candidate. */
@@ -51,6 +60,8 @@ const REF_SIZE = 100;
 
 export class CandidateEvaluator {
   readonly window: Window;
+  /** Measured ink height of the scanned text, px. */
+  readonly textHeight: number;
   private readonly O: Float32Array[];
   private readonly B: Float32Array[];
   evaluations = 0;
@@ -61,6 +72,7 @@ export class CandidateEvaluator {
     private readonly rasterizer: TextRasterizer,
   ) {
     const m = region.metrics;
+    this.textHeight = m.height;
     const margin = Math.max(3, m.height * 0.35);
     const { width, height } = region.patch;
     this.window = {
@@ -158,6 +170,31 @@ export class CandidateEvaluator {
       out[c] = Math.min(255, Math.max(0, bMean - f * (bMean - params.color[c])));
     }
     return out;
+  }
+
+  /**
+   * Mean absolute error with a fixed ink colour, restricted to the given
+   * column ranges of the window (e.g. the cells of one character).
+   */
+  errorIn(params: RenderParams, color: [number, number, number], columns: readonly [number, number][]): number {
+    const alpha = this.coverage(params);
+    const { y0, y1 } = this.window;
+    const w = this.region.patch.width;
+    let err = 0;
+    let n = 0;
+    for (const [a, b] of columns) {
+      const xa = Math.max(this.window.x0, Math.floor(a));
+      const xb = Math.min(this.window.x1, Math.ceil(b));
+      for (let y = y0; y < y1; y++) {
+        for (let x = xa; x < xb; x++) {
+          const i = y * w + x;
+          const al = alpha[i];
+          for (let c = 0; c < 3; c++) err += Math.abs(this.O[c][i] - (this.B[c][i] * (1 - al) + color[c] * al));
+          n += 3;
+        }
+      }
+    }
+    return n ? err / n : 0;
   }
 
   fidelity(params: RenderParams): FidelityMetrics {
@@ -262,8 +299,9 @@ export function refine(
   maxEvaluations: number,
   textHeight: number,
   fixedColor?: [number, number, number],
+  connectedScript = false,
 ): { params: RenderParams; cost: number } {
-  const dims: Dimension[] = [
+  let dims: Dimension[] = [
     { key: 'originX', step: Math.max(1, textHeight * 0.08), min: -Infinity, max: Infinity },
     { key: 'baselineY', step: Math.max(0.75, textHeight * 0.06), min: -Infinity, max: Infinity },
     { key: 'fontSize', step: 0.04, min: 2, max: 1000, multiplicative: true },
@@ -273,6 +311,8 @@ export function refine(
     { key: 'blur', step: 0.3, min: 0, max: 4 },
     { key: 'skewX', step: 0.06, min: -0.4, max: 0.4 },
   ];
+  // Tracking would break the headline joining Devanagari letters; the width is fitted with scaleX instead.
+  if (connectedScript) dims = dims.filter((d) => d.key !== 'letterSpacing');
   let best = { ...start };
   let bestCost = evaluator.evaluate(best, fixedColor).cost;
   const startCount = evaluator.evaluations;
@@ -306,12 +346,13 @@ export function refine(
 export function fitTypography(region: RegionAnalysis, sourceText: string, rasterizer: TextRasterizer, opts: FitOptions = {}): FitResult | undefined {
   const text = sourceText.trim();
   if (!text) return undefined;
-  const fonts = opts.fonts ?? FONT_CATALOG;
+  const fonts = opts.fonts ?? candidateFonts(text, opts.contextScripts);
+  const connected = hasConnectedScript(text);
   const evaluator = new CandidateEvaluator(region, text, rasterizer);
 
   const coarse: { params: RenderParams; cost: number }[] = [];
   for (const font of fonts) {
-    for (const weight of [400, 700]) {
+    for (const weight of font.weights) {
       const p = initialParams(region, rasterizer, text, font, weight, false);
       if (!p) continue;
       const e = evaluator.evaluate(p);
@@ -323,16 +364,23 @@ export function fitTypography(region: RegionAnalysis, sourceText: string, raster
 
   const refined = coarse
     .slice(0, opts.refineTop ?? 3)
-    .map((c) => refine(evaluator, c.params, opts.maxEvaluations ?? 220, region.metrics.height))
+    .map((c) => refine(evaluator, c.params, opts.maxEvaluations ?? 220, region.metrics.height, undefined, connected))
     .sort((a, b) => a.cost - b.cost);
 
   // Calibrate the ink colour on the winner, then let the shape (weight, blur,
   // position) re-adapt to the corrected colour, and calibrate once more.
   const winner = refined[0];
   let color = evaluator.calibrateInkColor(winner.params);
-  const reshaped = refine(evaluator, { ...winner.params, color }, Math.round((opts.maxEvaluations ?? 220) / 2), region.metrics.height, color);
+  const reshaped = refine(evaluator, { ...winner.params, color }, Math.round((opts.maxEvaluations ?? 220) / 2), region.metrics.height, color, connected);
   color = evaluator.calibrateInkColor(reshaped.params);
   const best = { params: { ...reshaped.params, color }, cost: winner.cost };
+
+  // Per-character glyph variants, judged against the other plausible fonts.
+  const ranked = [...refined, ...coarse].map((r) => r.params.fontId);
+  const glyphFonts = chooseGlyphFonts(evaluator, rasterizer, best.params, text, variantDonors(ranked, best.params.fontId));
+  if (glyphFonts) best.params.glyphFonts = glyphFonts;
+  if (getFont(best.params.fontId).category === 'handwriting') best.params.jitter = jitterFromWobble(baselineWobble(region));
+
   const refinedKeys = new Set(refined.map((r) => `${r.params.fontId}/${r.params.weight}`));
   const ranking = [...refined, ...coarse.filter((c) => !refinedKeys.has(`${c.params.fontId}/${c.params.weight}`))];
   const bestCost = best.cost;

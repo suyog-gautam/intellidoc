@@ -63,8 +63,8 @@ export class ReconstructionClient {
     return { textElements: r.textElements, layout: r.layout };
   }
 
-  async analyze(pageKey: string, page: Page, element: TextElement): Promise<TypographyEstimate | undefined> {
-    const r = await this.call({ type: 'analyze', pageKey, page, element });
+  async analyze(pageKey: string, page: Page, element: TextElement, languages?: readonly string[]): Promise<TypographyEstimate | undefined> {
+    const r = await this.call({ type: 'analyze', pageKey, page, element, languages: languages && [...languages] });
     if (r.type !== 'analyzed') throw new Error('Unexpected worker response');
     return r.typography;
   }

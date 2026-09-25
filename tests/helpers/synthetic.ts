@@ -1,5 +1,6 @@
 import type { RenderParams } from '@/core/document/model';
 import type { OrientedBox } from '@/core/geometry';
+import { gaussianBlur } from '@/core/image/filters';
 import { createRaster, type RasterImage } from '@/core/image/raster';
 import { renderCoverage, type TextRasterizer } from '@/core/rendering/textRasterizer';
 import { mulberry32 } from '@/core/utils/random';
@@ -50,6 +51,11 @@ export function defaultParams(overrides: Partial<RenderParams> = {}): RenderPara
 export function drawText(page: RasterImage, rasterizer: TextRasterizer, text: string, frame: OrientedBox, params: RenderParams): OrientedBox {
   const cov = renderCoverage(rasterizer, text, params, Math.round(frame.width), Math.round(frame.height));
   compositeUprightInk(page, frame, cov, () => params.color);
+  return textBox(rasterizer, text, frame, params);
+}
+
+/** Tight OCR-like box of text drawn with {@link drawText}. */
+function textBox(rasterizer: TextRasterizer, text: string, frame: OrientedBox, params: RenderParams): OrientedBox {
   const advance = rasterizer.measure(text, params);
   const capHeight = params.fontSize * 0.72;
   const c = Math.cos(frame.angle);
@@ -76,4 +82,33 @@ export async function syntheticScanJpeg(rasterizer: TextRasterizer, width: numbe
   id.data.set(page.data);
   ctx.putImageData(id, 0, 0);
   return { jpeg: new Uint8Array(canvas.toBuffer('image/jpeg', 92)), raster: page };
+}
+
+/**
+ * Like {@link drawText}, but every "1" loses its foot serif: Arial and
+ * Helvetica draw "1" without one, while Arimo (their metric-compatible
+ * stand-in) has it. This is how an Arial document looks to the fitter.
+ */
+export function drawTextFootlessOnes(page: RasterImage, rasterizer: TextRasterizer, text: string, frame: OrientedBox, params: RenderParams): OrientedBox {
+  const W = Math.round(frame.width);
+  const H = Math.round(frame.height);
+  const sharp = rasterizer.coverage(text, params, W, H);
+  const chars = Array.from(text);
+  chars.forEach((ch, i) => {
+    if (ch !== '1') return;
+    const x0 = Math.floor(params.originX + rasterizer.measure(chars.slice(0, i).join(''), params));
+    const x1 = Math.ceil(params.originX + rasterizer.measure(chars.slice(0, i + 1).join(''), params));
+    // Stem columns at mid-height; below the foot line keep only those.
+    const mid = Math.round(params.baselineY - params.fontSize * 0.3);
+    const stem: number[] = [];
+    for (let x = x0; x < x1; x++) if (sharp.data[mid * W + x] > 0.3) stem.push(x);
+    const s0 = Math.min(...stem) - 1;
+    const s1 = Math.max(...stem) + 1;
+    for (let y = Math.round(params.baselineY - params.fontSize * 0.12); y < params.baselineY + 3; y++) {
+      for (let x = x0 - 2; x < x1 + 2; x++) if (x < s0 || x > s1) sharp.data[y * W + x] = 0;
+    }
+  });
+  const cov = gaussianBlur(sharp, params.blur);
+  compositeUprightInk(page, frame, cov, () => params.color);
+  return textBox(rasterizer, text, frame, params);
 }

@@ -7,18 +7,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { RasterImage } from '@/core/image/raster';
 import { CanvasTextRasterizer, type CanvasFactory } from '@/core/rendering/textRasterizer';
-import { FONT_CATALOG } from '@/core/typography/fontCatalog';
+import { FONT_CATALOG, fontFaces } from '@/core/typography/fontCatalog';
 
 const root = process.cwd();
 let fontsRegistered = false;
 
 export function registerCandidateFonts(): void {
   if (fontsRegistered) return;
+  // Every subset is its own family, exactly as in the browser (see fontStack).
   for (const font of FONT_CATALOG) {
-    const pkg = font.faces[0].file.split('-latin-')[0];
-    for (const face of font.faces) {
-      const file = path.join(root, 'node_modules', '@fontsource', pkg, 'files', face.file);
-      if (fs.existsSync(file)) GlobalFonts.registerFromPath(file, font.family);
+    for (const face of fontFaces(font)) {
+      const file = path.join(root, 'node_modules', '@fontsource', font.pkg, 'files', face.file);
+      if (fs.existsSync(file)) GlobalFonts.registerFromPath(file, face.family);
     }
   }
   fontsRegistered = true;

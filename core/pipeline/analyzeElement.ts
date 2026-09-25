@@ -5,7 +5,7 @@ import { fitTypography, type FitOptions } from '../typography/fit';
 import { getFont } from '../typography/fontCatalog';
 import { analyzeRegion } from '../typography/regionAnalysis';
 
-export const ANALYZER_VERSION = 'heuristic-fit-1';
+export const ANALYZER_VERSION = 'heuristic-fit-2';
 
 /**
  * Measure and fit the visual style of one text element against the original

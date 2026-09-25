@@ -14,7 +14,8 @@ export type WorkerRequest =
   | { type: 'buildPage'; id: number; pageKey: string; pageId: string; ocr: OcrResult; skew: number }
   /** OCR recovery: crops of low-confidence words and uncovered text, for single-line re-recognition. */
   | { type: 'recoveryCrops'; id: number; pageKey: string; ocr: OcrResult }
-  | { type: 'analyze'; id: number; pageKey: string; page: Page; element: TextElement }
+  /** `languages`: the document's OCR languages; their scripts widen font candidates for numbers etc. */
+  | { type: 'analyze'; id: number; pageKey: string; page: Page; element: TextElement; languages?: string[] }
   | { type: 'render'; id: number; pageKey: string; page: Page }
   | { type: 'getOriginal'; id: number; pageKey: string }
   /** Small JPEG preview of the original page for the thumbnail rail. */

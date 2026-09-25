@@ -4,7 +4,7 @@ import { AppHeader } from '../AppHeader';
 import { UploadCard } from '../upload/UploadCard';
 
 const FEATURES = [
-  { icon: ScanText, title: 'Reads your scan', text: 'OCR finds every line of text and where it sits on the page, including values inside tables.' },
+  { icon: ScanText, title: 'Reads your scan', text: 'OCR finds every line of text and where it sits on the page, including values inside tables. English, Nepali, Hindi and more.' },
   { icon: Type, title: 'Matches the look', text: 'New text copies the original size, weight, ink colour, blur and paper grain. Fonts are visual estimates.' },
   { icon: Lock, title: 'Stays on your device', text: 'Recognition, editing and export all run in your browser. Nothing is uploaded.' },
 ];
@@ -14,9 +14,11 @@ interface Props {
   onIntent(): void;
   progress?: OpenProgress;
   error?: string;
+  languages: string[];
+  onLanguages(codes: string[]): void;
 }
 
-export function StartScreen({ onFile, onIntent, progress, error }: Props) {
+export function StartScreen({ onFile, onIntent, progress, error, languages, onLanguages }: Props) {
   return (
     <div className="flex min-h-dvh flex-col">
       <AppHeader />
@@ -44,7 +46,7 @@ export function StartScreen({ onFile, onIntent, progress, error }: Props) {
             ))}
           </ul>
         </section>
-        <UploadCard onFile={onFile} onIntent={onIntent} progress={progress} error={error} />
+        <UploadCard onFile={onFile} onIntent={onIntent} progress={progress} error={error} languages={languages} onLanguages={onLanguages} />
       </main>
     </div>
   );

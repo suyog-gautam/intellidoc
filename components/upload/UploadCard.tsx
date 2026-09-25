@@ -6,6 +6,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import type { OpenProgress } from '@/lib/session/documentSession';
 import { cn } from '@/lib/utils';
+import { LanguagePicker } from './LanguagePicker';
 
 const STAGE_LABEL: Record<OpenProgress['stage'], string> = {
   validating: 'Checking file',
@@ -39,9 +40,11 @@ interface Props {
   onIntent(): void;
   progress?: OpenProgress;
   error?: string;
+  languages: string[];
+  onLanguages(codes: string[]): void;
 }
 
-export function UploadCard({ onFile, onIntent, progress, error }: Props) {
+export function UploadCard({ onFile, onIntent, progress, error, languages, onLanguages }: Props) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
 
@@ -138,6 +141,7 @@ export function UploadCard({ onFile, onIntent, progress, error }: Props) {
           }}
         />
       </div>
+      <LanguagePicker value={languages} onChange={onLanguages} />
       {error && (
         <Alert variant="destructive" className="mt-4 border-danger-light bg-danger-light text-danger-text">
           <AlertDescription className="text-danger-text">{error}</AlertDescription>

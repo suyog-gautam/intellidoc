@@ -1,6 +1,7 @@
 import type { RenderParams, TypographyEstimate } from '../document/model';
 import { createMask } from '../image/filters';
 import type { TextRasterizer } from '../rendering/textRasterizer';
+import { getFont } from './fontCatalog';
 import { measureInk } from './inkMetrics';
 
 /**
@@ -10,7 +11,7 @@ import { measureInk } from './inkMetrics';
  */
 export type TextStyle = Pick<
   RenderParams,
-  'fontId' | 'weight' | 'italic' | 'fontSize' | 'scaleX' | 'letterSpacing' | 'wordSpacing' | 'skewX' | 'embolden' | 'blur' | 'color' | 'opacity'
+  'fontId' | 'weight' | 'italic' | 'fontSize' | 'scaleX' | 'letterSpacing' | 'wordSpacing' | 'skewX' | 'embolden' | 'blur' | 'color' | 'opacity' | 'glyphFonts' | 'jitter'
 >;
 
 export const STYLE_KEYS: readonly (keyof TextStyle)[] = [
@@ -26,11 +27,17 @@ export const STYLE_KEYS: readonly (keyof TextStyle)[] = [
   'blur',
   'color',
   'opacity',
+  'glyphFonts',
+  'jitter',
 ];
 
 export function extractStyle(p: RenderParams): TextStyle {
   const out = {} as Record<string, unknown>;
-  for (const k of STYLE_KEYS) out[k] = Array.isArray(p[k]) ? [...(p[k] as number[])] : p[k];
+  for (const k of STYLE_KEYS) {
+    // Absent optional keys are copied as undefined: in `applyStyle` that resets them on the target.
+    const v = p[k];
+    out[k] = Array.isArray(v) ? [...v] : v && typeof v === 'object' ? { ...v } : v;
+  }
   return out as TextStyle;
 }
 
@@ -59,7 +66,9 @@ function capHeight(r: TextRasterizer, fontId: string, weight: number): number {
  * Resolve the parameters to render with: detected params + user overrides.
  * When the user switches to a different font without choosing a size, the
  * size is re-derived so capital letters keep the same height on the page,
- * and the width scale fitted for the old font is reset.
+ * and the width scale fitted for the old font is reset. Glyph variants were
+ * chosen against the old font, so they fall back to the new font's defaults,
+ * and handwriting variation only applies to handwriting fonts.
  */
 export function resolveParams(base: RenderParams, overrides: Partial<RenderParams> | undefined, rasterizer: TextRasterizer): RenderParams {
   const defined = Object.fromEntries(Object.entries(overrides ?? {}).filter(([, v]) => v !== undefined)) as Partial<RenderParams>;
@@ -73,5 +82,26 @@ export function resolveParams(base: RenderParams, overrides: Partial<RenderParam
     if (overrides?.scaleX === undefined) p.scaleX = 1;
     if (overrides?.letterSpacing === undefined) p.letterSpacing = 0;
   }
-  return p;
+  return { ...p, ...glyphStyle(base, overrides) };
+}
+
+/** Handwriting variation for a handwriting font the user picked (the scan's own is measured). */
+export const DEFAULT_JITTER = 0.35;
+
+/**
+ * Glyph variants and handwriting variation after overrides. Both were
+ * derived for the detected font, so choosing another font resets them to
+ * that font's catalogue defaults unless the user set them explicitly.
+ * Pure (no rasteriser), so the UI shows exactly what will be rendered.
+ */
+export function glyphStyle(base: RenderParams, overrides: Partial<RenderParams> | undefined): Pick<RenderParams, 'glyphFonts' | 'jitter'> {
+  const fontId = overrides?.fontId ?? base.fontId;
+  let glyphFonts = overrides?.glyphFonts ?? base.glyphFonts;
+  let jitter = overrides?.jitter ?? base.jitter;
+  if (fontId !== base.fontId) {
+    const font = getFont(fontId);
+    if (overrides?.glyphFonts === undefined) glyphFonts = font.glyphDefaults ? { ...font.glyphDefaults } : undefined;
+    if (overrides?.jitter === undefined) jitter = font.category === 'handwriting' ? (base.jitter ?? DEFAULT_JITTER) : undefined;
+  }
+  return { glyphFonts, jitter };
 }

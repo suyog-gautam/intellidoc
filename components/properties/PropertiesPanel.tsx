@@ -4,7 +4,8 @@ import { AlignCenter, AlignLeft, AlignRight, Check, ClipboardCopy, ClipboardPast
 import { useEffect, useState, type ReactNode } from 'react';
 import type { EditCommand } from '@/core/document/history';
 import { elementIsModified, type RenderParams, type TextAlignment, type TextElement } from '@/core/document/model';
-import { getFont } from '@/core/typography/fontCatalog';
+import { getFont, hasFont } from '@/core/typography/fontCatalog';
+import { glyphStyle } from '@/core/typography/styleTransfer';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -125,7 +126,7 @@ export function PropertiesPanel(p: Props) {
   const t = element.typography;
   const o = element.styleOverrides ?? {};
   const detectedFont = t ? getFont(t.params.fontId) : undefined;
-  const effective: RenderParams | undefined = t && { ...t.params, ...o };
+  const effective: RenderParams | undefined = t && { ...t.params, ...o, ...glyphStyle(t.params, o) };
   const apply = (style: Partial<RenderParams>) => run({ type: 'applyStyle', elementId: element.id, style });
   const commitSize = () => {
     const v = parseFloat(size);
@@ -228,7 +229,30 @@ export function PropertiesPanel(p: Props) {
                   Bold
                 </ToggleGroupItem>
               </ToggleGroup>
+              <GlyphVariants params={effective!} />
             </div>
+
+            {getFont(effective!.fontId).category === 'handwriting' && (
+              <div className="space-y-1.5">
+                <Label id="variation-label">Natural variation</Label>
+                <ToggleGroup
+                  type="single"
+                  variant="outline"
+                  size="sm"
+                  value={String(nearestVariation(effective!.jitter ?? 0))}
+                  onValueChange={(v) => v && apply({ jitter: Number(v) })}
+                  aria-labelledby="variation-label"
+                  className="w-full *:flex-1 *:data-[state=on]:bg-primary *:data-[state=on]:text-primary-foreground"
+                >
+                  {VARIATIONS.map((v) => (
+                    <ToggleGroupItem key={v.value} value={String(v.value)}>
+                      {v.label}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+                <p className="text-[11px] text-tertiary">Handwriting is never perfectly even: each character gets a slight wobble in position, size and angle.</p>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
@@ -342,6 +366,33 @@ export function PropertiesPanel(p: Props) {
         )}
       </div>
     </div>
+  );
+}
+
+const VARIATIONS = [
+  { value: 0, label: 'Off' },
+  { value: 0.35, label: 'Subtle' },
+  { value: 0.7, label: 'Natural' },
+  { value: 1, label: 'Strong' },
+];
+
+function nearestVariation(j: number): number {
+  return VARIATIONS.reduce((best, v) => (Math.abs(v.value - j) < Math.abs(best - j) ? v.value : best), 0);
+}
+
+/** Characters drawn from another font because the scan's design differs (e.g. a "1" without a foot). */
+function GlyphVariants({ params }: { params: RenderParams }) {
+  const swaps = Object.entries(params.glyphFonts ?? {}).filter(([, id]) => id !== params.fontId && hasFont(id));
+  if (!swaps.length) return null;
+  return (
+    <p className="text-[11.5px] text-muted-foreground">
+      Matched to the scan:{' '}
+      {swaps.map(([ch, id], i) => (
+        <span key={ch}>
+          {i > 0 && ', '}“<span className="font-medium text-foreground">{ch}</span>” from {getFont(id).displayName}
+        </span>
+      ))}
+    </p>
   );
 }
 
