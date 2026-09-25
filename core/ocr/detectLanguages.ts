@@ -28,17 +28,50 @@ export interface LanguageChoice {
   script?: string;
 }
 
-/** The script most characters of `text` belong to. */
-export function dominantScript(text: string): Script | undefined {
+function scriptShares(text: string): Map<Script, number> {
   const counts = new Map<Script, number>();
+  let total = 0;
   for (const ch of text) {
     const s = scriptOf(ch.codePointAt(0)!);
-    if (s) counts.set(s, (counts.get(s) ?? 0) + 1);
+    if (!s) continue;
+    counts.set(s, (counts.get(s) ?? 0) + 1);
+    total++;
   }
+  for (const [s, c] of counts) counts.set(s, c / Math.max(1, total));
+  return counts;
+}
+
+/** The script most characters of `text` belong to. */
+export function dominantScript(text: string): Script | undefined {
   let best: Script | undefined;
   let n = 0;
-  for (const [s, c] of counts) if (c > n) [best, n] = [s, c];
+  for (const [s, c] of scriptShares(text)) if (c > n) [best, n] = [s, c];
   return best;
+}
+
+/** Headline script of the browser's language, if any (ne/hi/mr → Devanagari, bn → Bengali, pa → Gurmukhi). */
+function localeHeadlineScript(locales: readonly string[]): Script | undefined {
+  for (const raw of locales) {
+    const tag = raw.toLowerCase().split('-')[0];
+    if (['ne', 'hi', 'mr', 'sa'].includes(tag)) return 'devanagari';
+    if (['bn', 'as'].includes(tag)) return 'bengali';
+    if (tag === 'pa') return 'gurmukhi';
+  }
+  return undefined;
+}
+
+/**
+ * Which headline script the probe text shows. Phone photos give noisy
+ * probes (a mix of all three scripts); when no script clearly wins, the
+ * browser's language decides between the plausible ones.
+ */
+function headlineScriptOf(probe: string, locales: readonly string[]): Script | undefined {
+  const shares = [...scriptShares(probe)].filter(([s]) => s in HEADLINE_SCRIPTS).sort((a, b) => b[1] - a[1]);
+  if (!shares.length) return undefined;
+  const [top, share] = shares[0];
+  const local = localeHeadlineScript(locales);
+  if (share < 0.6 && local && (shares.find(([s]) => s === local)?.[1] ?? 0) >= 0.3) return local;
+  return top;
 }
 
 const HEADLINE_SCRIPTS: Partial<Record<Script, string>> = { devanagari: 'Devanagari', bengali: 'Bengali', gurmukhi: 'Gurmukhi' };
@@ -56,7 +89,7 @@ const HEADLINE_SCRIPTS: Partial<Record<Script, string>> = { devanagari: 'Devanag
  */
 export function chooseLanguages(e: LanguageEvidence): LanguageChoice {
   if (e.headlineWords >= MIN_HEADLINE_WORDS && e.headlineProbeText) {
-    const s = dominantScript(e.headlineProbeText);
+    const s = headlineScriptOf(e.headlineProbeText, e.locales);
     const osdName = s && HEADLINE_SCRIPTS[s];
     const langs = osdName && languagesForScript(osdName, e.locales);
     if (langs) return { languages: langs, source: 'headline', script: osdName };

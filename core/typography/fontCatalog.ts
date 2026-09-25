@@ -107,6 +107,8 @@ export const FONT_CATALOG: readonly CandidateFont[] = [
   font('laila', 'Laila', 'serif', ['Devanagari text (book)'], ['devanagari']),
   font('karma', 'Karma', 'serif', ['Devanagari traditional (calligraphic)'], ['devanagari']),
   font('khand', 'Khand', 'condensed', ['Devanagari condensed'], ['devanagari']),
+  // Measured closest open design to Preeti-style Nepali office documents (still far from identical).
+  font('gotu', 'Gotu', 'sans', ['Preeti-style Nepali print (nearest open design)'], ['devanagari']),
 
   // Other Indic scripts: Bengali, Gurmukhi (Punjabi), Gujarati, Tamil, Telugu, Kannada, Malayalam.
   font('noto-sans-bengali', 'Noto Sans Bengali', 'sans', ['Vrinda', 'Nirmala UI'], ['bengali']),

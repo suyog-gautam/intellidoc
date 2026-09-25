@@ -126,5 +126,8 @@ describe('languages and auto-detection', () => {
     // Unsure OSD falls back to the browser language.
     expect(chooseLanguages({ osd: { script: 'Thai', confidence: 0.3, orientation: 0 }, headlineWords: 0, locales: ['fr-FR'] })).toMatchObject({ languages: ['fra', 'eng'], source: 'locale' });
     expect(dominantScript('ਪੰਜਾਬੀ ab')).toBe('gurmukhi');
+    // A noisy phone-photo probe (measured on a real challan): the Nepali locale settles it; a clear probe doesn't need it.
+    expect(chooseLanguages({ headlineWords: 7, headlineProbeText: 'दे. ৭, ् ১১১৮ 4. ਦੱ थक ली, कै . 0 ਨ রণ', locales: ['ne-NP'] }).languages).toEqual(['nep', 'eng']);
+    expect(chooseLanguages({ headlineWords: 9, headlineProbeText: 'চালান নম্বর তারিখ', locales: ['ne-NP'] }).languages).toEqual(['ben', 'eng']);
   });
 });

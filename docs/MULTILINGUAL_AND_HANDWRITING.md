@@ -54,6 +54,27 @@ The editor header shows what was chosen ("Detected: नेपाली + English
 - **Faint hairlines** of high-contrast designs (Song/Ming and Mincho serifs) are erased along with the text. Removal adds faint ink near confirmed strokes. After deleting 中华人民共和国 in Noto Serif SC, the worst leftover column darkening drops from 4.5 to 1.3 levels.
 - **OCR recovery** counts combining marks (vowel signs, viramas) as text.
 
+## Minimal edits: unchanged characters keep the scan (`core/rendering/partialEdit.ts`)
+
+The best rendering of a character that didn't change is the scan itself. An edit is planned before anything is erased:
+- The common prefix and suffix (in clusters) are kept as original pixels when they stay in the same place. That means the same origin, no refitting of size or spacing, and no user style change.
+- Only the changed middle is erased and rendered. The erase is cut at the thinnest ink column near each boundary, and the kept glyphs' strokes are protected.
+- A cut never splits a joined word (Devanagari headline, Arabic joins). Digits and punctuation stand alone even in Devanagari, so "२०८०-०३-०१" → "२०८१-०४-१५" keeps "२०८" as scanned.
+
+This matters most where no stand-in font matches. On a real Nepali letter set in a Preeti-style font (the best open design reaches silhouette IoU ≈ 0.6–0.7), changing "078-580188" to "078-580199" redraws two digits, and "अजय कुमार पाण्डेय" → "अजय कुमार शर्मा" leaves the first word untouched. It also makes the footed-"1" problem moot whenever the 1 itself isn't edited.
+
+## Real documents (test files)
+
+Measured with `npm run slice`, `SLICE_LOCALES=ne-NP`, on three phone photos and scans of Nepali business papers:
+
+| Document | Auto language | OCR | Notes |
+|---|---|---|---|
+| Printed letter (Devanagari, Preeti-style + Latin footer) | नेपाली + English (headline, 44 words) | 82 words, conf 88 | Body text read almost perfectly; edits of date, place, name, phone rendered with minimal changes |
+| Challan (printed form, handwritten entries, photo) | नेपाली + English (headline probe + locale) | printed labels read; **handwriting not** | Red serial "065" → "066" matches the ink; handwritten Latin entries are misread |
+| Ledger (printed form, handwritten entries, photo) | नेपाली + English (headline, 8 words) | printed headers read; **handwriting not** | Same limit |
+
+The challan photo gave a noisy headline probe (a mix of Devanagari, Bengali and Gurmukhi characters). When no headline script clearly wins (< 60%), the browser's language decides between the plausible ones.
+
 ## Glyph variants (the "1" with a foot)
 
 **Problem.** Arimo, the metric-compatible stand-in for Arial and Helvetica, draws `1` with a flat foot, which Arial and Helvetica don't have. So an Arial "17652" edited to "17653" grew a line under the 1.

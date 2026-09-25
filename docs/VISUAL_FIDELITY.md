@@ -30,6 +30,9 @@ Weight classes are learned per page: stroke is normalised by body-text height, t
 ## Glyph variants and handwriting (`glyphVariants.ts`)
 After the fit, variant-prone characters (digits, `agltyIJQGR`) are compared one by one against structurally different designs from other candidate fonts. The comparison uses only that character's pixels, after a local alignment. The standard case is Arimo's footed `1`, which Arial does not have. Handwriting fonts get natural variation measured from the baseline wobble. Details and measurements: `docs/MULTILINGUAL_AND_HANDWRITING.md`.
 
+## Minimal edits (`partialEdit.ts`)
+Unchanged prefix/suffix characters keep the scan's pixels; only the changed middle is erased and rendered (never cutting inside a joined word). See `docs/MULTILINGUAL_AND_HANDWRITING.md`.
+
 ## Replacement layout (`layoutReplacement.ts`)
 The replacement keeps the anchor (left, centre or right). If it doesn't fit the slot, the least visible adjustment is tried first: tracking (up to −3% em), then width (up to −12%), then size (up to −20%). Shorter text is never stretched.
 
